@@ -1,0 +1,16 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-docker-compose
+{
+    "name": "xv6-labs-2022",
+    "dockerComposeFile": "../docker/docker-compose.yml",
+    "service": "xv6-labs-2022",
+    "workspaceFolder": "/root/xv6-labs-2022",
+    "postCreateCommand": "echo '✅ Dev container is ready!'; git config --global --add safe.directory /root/xv6-labs-2022",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    }
+}
