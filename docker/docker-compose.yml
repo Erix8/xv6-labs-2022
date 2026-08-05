@@ -10,4 +10,4 @@ services:
       - 1.1.1.1
     volumes:
       - ../:/root/xv6-labs-2022 # 本地目录挂载到容器
-      - /Users/erix/.ssh:/root/.ssh:ro # 挂载 SSH 密钥
+      - ~/.ssh:/root/.ssh:ro # 挂载 SSH 密钥
