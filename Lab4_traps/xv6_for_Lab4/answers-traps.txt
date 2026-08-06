@@ -1,0 +1,65 @@
+Lab 4: Traps
+Task 1: RISC-V assembly
+Answers based on the generated user/call.asm.
+
+Q1. Which registers contain arguments to functions? For example, which
+    register holds 13 in main's call to printf?
+
+    RISC-V passes the first 8 integer/pointer arguments in registers a0-a7.
+    In main's call  printf("%d %d\n", f(8)+1, 13):
+      a0 = pointer to the format string (0x7f0)
+      a1 = 12   (f(8)+1, constant-folded by the compiler)
+      a2 = 13
+    So 13 is held in register a2 (see call.asm line 45: "li a2,13").
+
+Q2. Where is the call to function f in the assembly code for main?
+    Where is the call to g?
+
+    There are NO calls to f or g in main. The compiler inlined both:
+      - g is inlined into f: f's body is identical to g's ("addiw a0,a0,3;
+        ret" with no "jal g"), because g(x) was replaced by x+3.
+      - f is inlined into main and then constant-folded: f(8)+1 becomes
+        12, so main simply executes "li a1, 12" (call.asm line 46).
+
+Q3. At what address is the function printf located?
+
+    0x64a. (call.asm line 50 comment "# 64a <printf>"; the label is at
+    "000000000000064a <printf>:".)
+
+Q4. What value is in the register ra just after the jalr to printf in main?
+
+    ra = 0x38, the address of the instruction right after the jalr
+    ("li a0, 0", the start of the exit(0) code). jalr sets ra to PC+4,
+    i.e. the return address of the call.
+
+Q5. Run the following code.
+      unsigned int i = 0x00646c72;
+      printf("H%x Wo%s", 57616, &i);
+    (a) What is the output?
+        "H110 World"
+        - 57616 == 0xE110, so %x prints "e110".
+        - i = 0x00646c72 is little-endian, so the bytes in memory are
+          72 6c 64 00 = 'r','l','d','\0'. As a string, "rld", so
+          "Wo%s" prints "World".
+
+    (b) If the RISC-V were instead big-endian what would you set i to
+        in order to yield the same output?
+        i = 0x726c6400, so that memory contains the bytes 72 6c 64 00
+        ('r','l','d','\0') in order.
+
+    (c) Would you need to change 57616 to a different value?
+        No. %x prints the numeric value 57616 regardless of endianness;
+        endianness only affects how a multi-byte value is laid out in
+        memory, which matters for the %s/&i part.
+
+Q6. In the following code, what is going to be printed after 'y='?
+    (note: the answer is not a specific value.) Why does this happen?
+      printf("x=%d y=%d", 3);
+
+    'y=' is followed by an unspecified/garbage value. printf has two %d
+    conversions but only one argument was actually passed (3, in a1).
+    vprintf() fetches its variadic arguments from the register save area
+    in order (a1, a2, ...); the second %d therefore reads from a2, which
+    was never set up by the caller. It contains whatever leftover value
+    happened to be in a2, so the printed number is undefined and can vary
+    from run to run.
