@@ -257,7 +257,7 @@ first system call of the machine (initcode's `exec("/init")`), because the
 page-faulting instruction is in `syscall()`, which only runs after a user
 `ecall`.
 
-**Solution / answers:** record all the answers above in `answers-syscall.txt`.
+**Solution / answers:** record all the answers above in [`answers-syscall.txt`](./xv6_for_Lab2/answers-syscall.txt).
 
 ### System call tracing (moderate)
 
@@ -309,13 +309,7 @@ user/usys.pl  generates the stub:            ▼
    - `syscalls[SYS_trace] = sys_trace` in the dispatch table;
    - add `"trace"` to the `syscall_names[]` array used for the printed output;
    - in `syscall()` itself, after `p->trapframe->a0 = syscalls[num]();`, check the mask
-     and print the trace line:
-     ```c
-     if(p->trace_mask & (1 << num)) {
-       printf("%d: syscall %s -> %d\n",
-              p->pid, syscall_names[num], p->trapframe->a0);
-     }
-     ```
+     and print the trace line.
 4. **Kernel state** — add an `int trace_mask` field to `struct proc`
    ([`kernel/proc.h`](./xv6_for_Lab2/kernel/proc.h)) and implement
    `sys_trace()` in [`kernel/sysproc.c`](./xv6_for_Lab2/kernel/sysproc.c): read the
@@ -344,6 +338,91 @@ user/usys.pl  generates the stub:            ▼
 ### Sysinfo (moderate)
 
 Add a `sysinfo` system call that collects information about the running system.
-It fills a `struct sysinfo` with the number of bytes of free memory (`freemem`)
-and the number of non-`UNUSED` processes (`nproc`). You pass when `sysinfotest`
-prints "sysinfotest: OK".
+It takes one argument — a pointer to a user-space `struct sysinfo`
+([`kernel/sysinfo.h`](./xv6_for_Lab2/kernel/sysinfo.h)) — and the kernel fills in
+the number of bytes of free memory (`freemem`) and the number of processes whose
+state is not `UNUSED` (`nproc`). You pass when `sysinfotest` prints
+"sysinfotest: OK".
+
+**UNIX interfaces used**
+
+| Interface | Kind | Description |
+| --- | --- | --- |
+| `sysinfo(struct sysinfo *)` | new system call | Fill a user-supplied `struct sysinfo` with `freemem` (free bytes) and `nproc` (process count) |
+| `argaddr(0, &addr)` | kernel arg parser | Fetch the user virtual address of the `struct sysinfo` from the trapframe |
+| `copyout(p->pagetable, addr, &info, sizeof(info))` | kernel VM helper | Safely copy the kernel-filled struct back into the user address space |
+| `free_mem()` | new kernel helper ([`kernel/kalloc.c`](./xv6_for_Lab2/kernel/kalloc.c)) | Walk `kmem.freelist` under the lock, summing `PGSIZE` per free page |
+| `nproc()` | new kernel helper ([`kernel/proc.c`](./xv6_for_Lab2/kernel/proc.c)) | Walk the global `proc[NPROC]` table counting `state != UNUSED` |
+| `struct sysinfo` | kernel struct ([`kernel/sysinfo.h`](./xv6_for_Lab2/kernel/sysinfo.h)) | `{ uint64 freemem; uint64 nproc; }` — both fields are 64-bit |
+
+**How the pieces fit together**
+
+Unlike `trace`, which only stores an integer in the process, `sysinfo` must *write
+back* a whole structure to user memory. This adds two kernel helpers plus a
+`copyout` to the usual five-place syscall wiring:
+
+```
+user space                                  kernel
+──────────                                  ──────
+user/sysinfotest.c                          sysinfo.h:  struct sysinfo { uint64 freemem, nproc; }
+  struct sysinfo info;                        │
+  sysinfo(&info)                  ──►        syscall.h:  #define SYS_sysinfo 23
+                                              │
+user/user.h   struct sysinfo;                ▼
+              int sysinfo(...)              syscall.c:  syscalls[SYS_sysinfo] = sys_sysinfo
+user/usys.pl  entry("sysinfo")               │
+  li a7, SYS_sysinfo  ecall                  ▼
+                                             sysproc.c:  sys_sysinfo() {
+                                               argaddr(0, &addr);
+                                               info.freemem = free_mem();  // kalloc.c
+                                               info.nproc   = nproc();     // proc.c
+                                               copyout(p->pagetable, addr,
+                                                       &info, sizeof(info)); }
+```
+
+1. **Makefile** — add `$U/_sysinfotest` to `UPROGS` so the provided test program is
+   compiled into the file-system image.
+2. **User space stubs**
+   - [`user/user.h`](./xv6_for_Lab2/user/user.h): add the forward declaration
+     `struct sysinfo;` *before* the prototype, so `user.h` can name the type without
+     including kernel headers.
+   - [`user/usys.pl`](./xv6_for_Lab2/user/usys.pl): add `entry("sysinfo")`; `make`
+     regenerates `user/usys.S` with `li a7, SYS_sysinfo; ecall; ret`.
+   - [`kernel/syscall.h`](./xv6_for_Lab2/kernel/syscall.h): assign `#define SYS_sysinfo 23`.
+3. **Kernel helpers** — declare both in [`kernel/defs.h`](./xv6_for_Lab2/kernel/defs.h)
+   (under `// kalloc.c` and `// proc.c`) and implement them:
+   - [`kernel/kalloc.c`](./xv6_for_Lab2/kernel/kalloc.c): `free_mem()` walks the
+     free-page list `kmem.freelist`, accumulating `PGSIZE` per node. The walk must
+     hold `kmem.lock` so a concurrent `kalloc()`/`kfree()` cannot change the list
+     under it.
+     
+   - [`kernel/proc.c`](./xv6_for_Lab2/kernel/proc.c): `nproc()` scans the global
+     `proc[NPROC]` table and counts every entry whose `state` is not `UNUSED`,
+     guarding each read with `p->lock`.
+     
+4. **Kernel dispatch** — register the handler in [`kernel/syscall.c`](./xv6_for_Lab2/kernel/syscall.c):
+   `extern uint64 sys_sysinfo(void);`, `syscalls[SYS_sysinfo] = sys_sysinfo`, and add
+   `"sysinfo"` to `syscall_names[]`.
+5. **sys_sysinfo()** — implement in [`kernel/sysproc.c`](./xv6_for_Lab2/kernel/sysproc.c)
+   (plus `#include "sysinfo.h"`): get the user pointer with `argaddr(0, &addr)`, fill a
+   kernel-stack `struct sysinfo` with the two helpers, and write it back with
+   `copyout`. Return `-1` if the
+   `copyout` fails (e.g. a bogus user pointer), else `0`.
+
+**Key points**
+
+- `freemem` is reported in **bytes**, so the page count must be multiplied by
+  `PGSIZE` (4096), not just counted.
+- `struct sysinfo` fields are `uint64`, which is why both helpers return `uint64`
+  even though the counts are small integers.
+- Field order in `sys_sysinfo()` (`freemem` first, `nproc` second) must match the
+  order in [`kernel/sysinfo.h`](./xv6_for_Lab2/kernel/sysinfo.h) so the memory layout
+  of the copied struct is correct.
+- `copyout()` performs the address-space check and copy across the user/kernel
+  boundary — the same pattern used by `filestat()` in [`kernel/file.c`](./xv6_for_Lab2/kernel/file.c)
+  and the reference example `sys_fstat()` in [`kernel/sysfile.c`](./xv6_for_Lab2/kernel/sysfile.c).
+- The number of non-`UNUSED` processes includes `RUNNABLE`, `RUNNING`, `SLEEPING`,
+  `ZOMBIE`, and `USED` slots; only truly free slots are skipped.
+- Unlike `trace`, `sysinfo` does **not** modify per-process state and needs no
+  `fork()` change — every process can ask the kernel at any time and gets a fresh
+  snapshot.
