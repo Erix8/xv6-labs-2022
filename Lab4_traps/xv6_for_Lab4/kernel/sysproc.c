@@ -94,3 +94,41 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_sigalarm(void)
+{
+  int interval;
+  uint64 handler;
+
+  argint(0, &interval); // a0 = ticks
+  argaddr(1, &handler); // a1 = handler
+
+  struct proc *p = myproc();
+  p->alarm_interval = interval;
+  p->alarm_handler = handler;
+  p->alarm_ticks = 0;
+  if (interval == 0)
+    p->alarm_active = 0;
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+
+  // save the a0 value from the backup trapframe
+  // syscall() will cover trapframe->a0 with the return value
+  // so we need to save it before restoring the trapframe
+  uint64 saved_a0 = p->alarm_backup.a0;
+
+  // restore the original trapframe from the backup
+  *p->trapframe = p->alarm_backup;
+
+  // allow new alarm to be set again
+  p->alarm_active = 0;
+
+  // return the saved a0 value to the user program
+  return saved_a0;
+}

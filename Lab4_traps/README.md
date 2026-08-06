@@ -220,18 +220,96 @@ behind `bttest`'s `sleep(1)`. The walk stops after `usertrap` because its frame
 holds no valid saved frame pointer (`uservec` reaches it by jumping, not calling).
 
 
-### Alarm (hard) — TODO
+### Alarm (hard) — DONE
 
 Add `sigalarm(interval, handler)` and `sigreturn()` system calls. After every `n`
 ticks of CPU time a process consumes, the kernel should call the user's handler
 function. When the handler returns, the application should resume where it left off.
 `sigalarm(0, 0)` stops the periodic alarms. Pass `alarmtest` and `usertests -q`.
 
-Plan: wire up the two syscalls (user.h, usys.pl, syscall.h, syscall.c), add
-`alarm_interval/alarm_handler/alarm_ticks` fields (plus a saved-trapframe area) to
-`struct proc`, count ticks in `usertrap()` when `which_dev == 2`, point
-`trapframe->epc` at the handler, and implement `sys_sigreturn()` to restore the
-saved registers/`epc` (prevent re-entrant handler calls; remember to restore `a0`).
+**How the pieces fit together**
+
+The whole mechanism rests on one fact from `trampoline.S`: `usertrapret()` sets
+`sepc` from `trapframe->epc`, and `sret` resumes user code at `sepc`. So the kernel
+"jumps" the process into its handler by pointing `trapframe->epc` at the handler,
+and "restores" the interrupted program by copying a saved trapframe back. One alarm
+cycle:
+
+```
+user running (PC = P) --timer interrupt--> usertrap():
+  1. trapframe->epc = r_sepc()          # record interrupted PC
+  2. if(which_dev == 2 && interval > 0 && !active):
+       alarm_backup = *trapframe        # full snapshot (epc + all 31 regs)
+       trapframe->epc = alarm_handler   # next sret jumps to the handler
+       alarm_ticks = 0; alarm_active = 1
+  ... sret -> handler runs ...
+handler calls sigreturn() -> sys_sigreturn():
+  1. saved_a0 = alarm_backup.a0         # syscall() will overwrite trapframe->a0
+  2. *trapframe = alarm_backup          # epc back to P, registers restored
+  3. alarm_active = 0
+  4. return saved_a0                    # so a0 is restored too (test3)
+  ... sret -> resumes at P, untouched
+```
+
+Changes made:
+
+- [`Makefile`](./xv6_for_Lab4/Makefile) — added `$U/_alarmtest` to `UPROGS`.
+- [`user/user.h`](./xv6_for_Lab4/user/user.h) — declared `int sigalarm(int ticks,
+  void (*handler)());` and `int sigreturn(void);`.
+- [`user/usys.pl`](./xv6_for_Lab4/user/usys.pl) — added `entry("sigalarm")` and
+  `entry("sigreturn")` (generates the `li a7, SYS_*; ecall; ret` stubs).
+- [`kernel/syscall.h`](./xv6_for_Lab4/kernel/syscall.h) — `SYS_sigalarm 22`,
+  `SYS_sigreturn 23`.
+- [`kernel/syscall.c`](./xv6_for_Lab4/kernel/syscall.c) — externs + entries in the
+  `syscalls[]` dispatch table.
+- [`kernel/proc.h`](./xv6_for_Lab4/kernel/proc.h) — new fields in `struct proc`:
+  `alarm_interval`, `alarm_handler`, `alarm_ticks`, `alarm_active`, and an embedded
+  `struct trapframe alarm_backup` (a by-value copy, so each process owns its own
+  snapshot — no shared memory).
+- [`kernel/proc.c`](./xv6_for_Lab4/kernel/proc.c) — zero-initialized all alarm
+  fields in `allocproc()`; in `fork()` the child inherits `interval`/`handler` but
+  resets `ticks`/`active` (a child is never "inside the handler").
+- [`kernel/trap.c`](./xv6_for_Lab4/kernel/trap.c) — in `usertrap()`, inside the
+  `which_dev == 2` branch: count `alarm_ticks`, and when the interval expires
+  back up the trapframe, point `epc` at the handler, reset the counter and set
+  `alarm_active`.
+- [`kernel/sysproc.c`](./xv6_for_Lab4/kernel/sysproc.c) — implemented
+  `sys_sigalarm()` (store interval/handler, reset ticks) and `sys_sigreturn()`
+  (restore the backup, clear `alarm_active`, return the saved a0).
+
+**Key points**
+
+- Gate on `alarm_interval > 0`, *not* `alarm_handler != 0` — `periodic` lives at
+  address 0 in `alarmtest`.
+- `alarm_active` prevents re-entrant handler calls (`test2`).
+- `sys_sigreturn()` returns the saved a0 because `syscall()` stores the return
+  value into `trapframe->a0`; returning the saved value is what restores a0
+  (`test3`).
+- Resetting `alarm_ticks = 0` when the alarm fires re-arms it (`test1`).
+
+**Verification**
+
+```
+$ alarmtest
+test0 start
+........alarm!
+test0 passed
+test1 start
+...alarm!..alarm!...alarm!..alarm!...
+test1 passed
+test2 start
+................alarm!
+test2 passed
+test3 start
+test3 passed
+$ usertests -q
+... ALL TESTS PASSED
+```
+
+`./grade-lab-traps` (official grader) reports **Score: 95/95** — answers-traps.txt,
+backtrace (bttest + addr2line), all four `alarmtest` tests, `usertests`, and
+`time.txt` all pass. The `time.txt` file records the hours spent on the lab.
+
 
 
 
