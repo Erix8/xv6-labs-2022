@@ -266,6 +266,81 @@ bits specify which system calls to trace. The kernel prints a line with the proc
 id, system call name, and return value when a traced system call is about to return.
 Tracing applies to the calling process and its children.
 
+**UNIX interfaces used**
+
+| Interface | Kind | Description |
+| --- | --- | --- |
+| `trace(int mask)` | new system call | Enable tracing for the calling process; bit *n* of `mask` selects syscall number *n* (e.g. `1 << SYS_fork` traces `fork`) |
+| `fork()` | system call | Every child inherits the parent's trace mask, so tracing propagates to the whole process tree |
+| `exec(path, argv)` | system call | The first traced call you'll observe: `trace` runs its command by `exec`-ing it |
+| `printf(fd, ...)` | library (printf.c) | Kernel-side: emits `pid: syscall name -> return value` to the console |
+| `argint(0, &n)` | kernel arg parser | In [`kernel/syscall.c`](./xv6_for_Lab2/kernel/syscall.c): fetch the first system-call argument (the mask) from the trapframe |
+| `atoi(argv[1])` | library (ulib.c) | Convert the mask string (e.g. `"32"`, `"2147483647"`) to an `int` |
+
+**How the pieces fit together**
+
+Adding a system call touches five places, three in user space and two in the kernel:
+
+```
+user space                                  kernel
+──────────                                  ──────
+user/trace.c  calls trace(mask)      ──►    syscall.h:  #define SYS_trace 22
+                                              │
+user/user.h   declares int trace(int)        │
+user/usys.pl  generates the stub:            ▼
+              li a7, SYS_trace  ecall        syscall.c:  syscalls[SYS_trace] = sys_trace
+                                              │
+                                              ▼
+                                             sysproc.c:  sys_trace() {
+                                               argint(0, &mask);
+                                               myproc()->trace_mask = mask; }
+```
+
+1. **Makefile** — add `$U/_trace` to `UPROGS` so `user/trace.c` is compiled into the
+   file-system image.
+2. **User space stubs**
+   - [`user/user.h`](./xv6_for_Lab2/user/user.h): declare `int trace(int);`
+   - [`user/usys.pl`](./xv6_for_Lab2/user/usys.pl): add `entry("trace")`; when you run
+     `make`, the script generates `user/usys.S` with the assembly stub
+     `li a7, SYS_trace; ecall; ret`.
+   - [`kernel/syscall.h`](./xv6_for_Lab2/kernel/syscall.h): assign the new syscall
+     number `#define SYS_trace 22`.
+3. **Kernel dispatch** — register the handler in [`kernel/syscall.c`](./xv6_for_Lab2/kernel/syscall.c):
+   - `syscalls[SYS_trace] = sys_trace` in the dispatch table;
+   - add `"trace"` to the `syscall_names[]` array used for the printed output;
+   - in `syscall()` itself, after `p->trapframe->a0 = syscalls[num]();`, check the mask
+     and print the trace line:
+     ```c
+     if(p->trace_mask & (1 << num)) {
+       printf("%d: syscall %s -> %d\n",
+              p->pid, syscall_names[num], p->trapframe->a0);
+     }
+     ```
+4. **Kernel state** — add an `int trace_mask` field to `struct proc`
+   ([`kernel/proc.h`](./xv6_for_Lab2/kernel/proc.h)) and implement
+   `sys_trace()` in [`kernel/sysproc.c`](./xv6_for_Lab2/kernel/sysproc.c): read the
+   mask with `argint(0, &mask)` and store it in `myproc()->trace_mask`, returning 0.
+5. **Inheritance** — in `fork()` ([`kernel/proc.c`](./xv6_for_Lab2/kernel/proc.c)),
+   copy the mask so children are traced too:
+   ```c
+   np->trace_mask = p->trace_mask;
+   ```
+
+**Understanding the output**
+
+- `32` is `1 << SYS_read` (see [`kernel/syscall.h`](./xv6_for_Lab2/kernel/syscall.h)),
+  so only `read` is traced.
+- `2147483647` has all 31 low bits set, so every system call is traced (`trace ->
+  0`, `exec -> 3`, `open -> 3`, `read -> 1023`, ..., `close -> 0`).
+- The line is printed **after** the syscall handler returns, so the value shown is the
+  return value stored back into `p->trapframe->a0`.
+- `trace` itself is traced by its own call (`4: syscall trace -> 0` in the second
+  example above) because the mask is already set when `syscall()` dispatches the
+  `trace` system call.
+- Because each `fork`ed child inherits the mask, descendants of a traced process are
+  traced too — this is why the `forkforkfork` example shows traced `fork` calls with
+  *different* pids (each descendant inherited the mask from `usertests`).
+
 ### Sysinfo (moderate)
 
 Add a `sysinfo` system call that collects information about the running system.
