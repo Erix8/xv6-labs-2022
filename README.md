@@ -22,8 +22,8 @@ course information.
 |---|-----|---------|---------|
 | 1 | [Xv6 & Unix Utilities](Lab1_Xv6_and_Unix_utilities/README.md) | Implement classic Unix utilities (sleep, pingpong, primes, find, xargs) in xv6. | ✅
 | 2 | [System Calls](Lab2_system_calls/README.md) | Add new system calls (trace, sysinfo) and practice debugging with gdb. | ✅
-| 3 | [Page Tables](Lab3_page_tables/README.md) | Speed up getpid, print page tables, and detect accessed pages. | 👨🏻‍💻
-| 4 | [Traps](Lab4_traps/README.md) | RISC-V assembly, backtrace, and user-level alarm handling. | 😴
+| 3 | [Page Tables](Lab3_page_tables/README.md) | Speed up getpid, print page tables, and detect accessed pages. | ✅
+| 4 | [Traps](Lab4_traps/README.md) | RISC-V assembly, backtrace, and user-level alarm handling. | 👨🏻‍💻
 | 5 | [Copy-on-Write Fork](Lab5_Copy-on-Write_Fork_for_xv6/README.md) | Implement copy-on-write fork to defer page copying. | 😴
 | 6 | [Multithreading](Lab6_Multithreading/README.md) | User-level threads, parallel hash table, and a barrier. | 😴
 | 7 | [Networking](Lab7_networking/README.md) | Write an E1000 NIC device driver. | 😴
