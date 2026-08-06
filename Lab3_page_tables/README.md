@@ -111,9 +111,125 @@ make grade       # official grading script
 ```
 
 ### Print a page table (easy)
-Write a `vmprint()` function that takes a `pagetable_t` argument and prints the
-page table in the required format. Insert `if(p->pid==1) vmprint(p->pagetable)` in
-`exec.c` just before `return argc` to print the first process's page table.
+
+To help you visualize RISC-V page tables (and future debugging), write a
+`vmprint()` function that recursively walks a page table and prints every valid
+PTE with its depth, index, raw PTE bits and physical address. It is invoked once
+for the first process right after `init` finishes `exec`-ing, so you can see the
+address-space layout of the very first user process.
+
+**UNIX interfaces used**
+
+| Interface | Kind | Description |
+| --- | --- | --- |
+| `vmprint(pagetable_t)` | new kernel function ([`kernel/vm.c`](./xv6_for_Lab3/kernel/vm.c)) | Print the page table rooted at `pagetable` in the required format |
+| `vmprint_rec(pagetable_t, int)` | static helper ([`kernel/vm.c`](./xv6_for_Lab3/kernel/vm.c)) | Recursive depth-first walk; `depth` controls the `" .."` indentation |
+| `PTE_V` | kernel macro ([`kernel/riscv.h`](./xv6_for_Lab3/kernel/riscv.h)) | Valid bit — skip PTEs without it |
+| `PTE_R\|PTE_W\|PTE_X` | kernel macros ([`kernel/riscv.h`](./xv6_for_Lab3/kernel/riscv.h)) | Leaf permission bits — a PTE with none of them points to a lower-level page-table page |
+| `PTE2PA(pte)` | kernel macro ([`kernel/riscv.h`](./xv6_for_Lab3/kernel/riscv.h)) | Extract the physical address from a PTE |
+| `%p` | printf format ([`kernel/printf.c`](./xv6_for_Lab3/kernel/printf.c)) | Print a full 64-bit value in hex (`0x...`) |
+| `exec()` | kernel ([`kernel/exec.c`](./xv6_for_Lab3/kernel/exec.c)) | Call site: `if(p->pid==1) vmprint(p->pagetable);` right before `return argc` |
+
+**How the pieces fit together**
+
+```
+boot: initcode --exec("/init")--> init process (pid=1)
+                                    │
+                                    ▼
+                        exec.c: exec() (p->pid == 1)
+                          ┌───────────────────────────────────────┐
+                          │  commit new image:                     │
+                          │  oldpagetable = p->pagetable;          │
+                          │  p->pagetable = pagetable;   ← new page│
+                          │  proc_freepagetable(oldpagetable,...); │
+                          │  vmprint(p->pagetable);    ← print it  │
+                          └───────────────────────────────────────┘
+                                    │
+                                    ▼
+                        vm.c: vmprint()  "page table 0x..."
+                          └─ vmprint_rec(pagetable, depth=1)
+                               for each valid PTE:
+                                 print " .."*depth, index, pte, pa
+                                 if PTE has no R/W/X → recurse one level down
+```
+
+**Expected output** (physical addresses may differ; entry counts and virtual
+addresses must match)
+
+```
+page table 0x0000000087f6b000
+ ..0: pte 0x0000000021fd9c01 pa 0x0000000087f67000
+ .. ..0: pte 0x0000000021fd9801 pa 0x0000000087f66000
+ .. .. ..0: pte 0x0000000021fda01b pa 0x0000000087f68000
+ .. .. ..1: pte 0x0000000021fd9417 pa 0x0000000087f65000
+ .. .. ..2: pte 0x0000000021fd9007 pa 0x0000000087f64000
+ .. .. ..3: pte 0x0000000021fd8c17 pa 0x0000000087f63000
+ ..255: pte 0x0000000021fda801 pa 0x0000000087f6a000
+ .. ..511: pte 0x0000000021fda401 pa 0x0000000087f69000
+ .. .. ..509: pte 0x0000000021fdcc13 pa 0x0000000087f73000
+ .. .. ..510: pte 0x0000000021fdd007 pa 0x0000000087f74000
+ .. .. ..511: pte 0x0000000020001c0b pa 0x0000000080007000
+init: starting sh
+```
+
+Decoding the output (Sv39 three-level page tables):
+
+- Line `..0:` at depth 1 is the **page-table page PTE** for virtual-address
+  indices 0..511 at level 2. It has no `R/W/X` bits, so it points to another
+  page-table page.
+- Under it, `.. ..0:` is the level-1 page-table page for index 0.
+- Under that, `.. .. ..0/1/2/3:` are **leaf** PTEs mapping the program text,
+  data and stack pages near address 0.
+- `..255:` (depth 1) is the level-2 index 255 — the high user addresses where
+  the user stack guard, stack, trapframe and trampoline live, and its
+  descendants `.. .. ..509/510/511:` are the corresponding leaves.
+
+**Implementation steps**
+
+1. **[`kernel/vm.c`](./xv6_for_Lab3/kernel/vm.c)** — implement
+   `vmprint(pagetable_t)` plus a static recursive helper
+   `vmprint_rec(pagetable, depth)`, placed near `freewalk()` (the recursion
+   structure mirrors it). The helper iterates over all 512 PTEs, skips invalid
+   ones (`PTE_V`), prints the indentation/`pte`/`pa` line, and recurses one level
+   deeper whenever the PTE has no `R/W/X` bits (i.e. it points to a lower-level
+   page-table page).
+2. **[`kernel/defs.h`](./xv6_for_Lab3/kernel/defs.h)** — declare the prototype
+   `void vmprint(pagetable_t);` in the `// vm.c` section so `exec.c` can call it.
+3. **[`kernel/exec.c`](./xv6_for_Lab3/kernel/exec.c)** — after committing the new
+   user image (just before `return argc`), insert `if(p->pid==1) vmprint(p->pagetable);`
+   to print the first process's page table.
+
+**Key points**
+
+- Only print PTEs with `PTE_V` set — otherwise you would dump 512 garbage lines.
+- Page-table pages deeper in the tree are **still printed** (e.g. `..0:`, `..255:`),
+  not just leaf PTEs.
+- A PTE whose `R/W/X` bits are all zero points to a lower-level page table;
+  recurse with `PTE2PA(pte)` as the next `pagetable_t`.
+- Indentation: `depth` 1 → `" .."`, 2 → `" .. .."`, 3 → `" .. .. .."` — the same
+  leading spaces as the example.
+- Index printed is the PTE's slot `i` (0-511) in the current page-table page, not
+  a virtual address.
+- Both the raw PTE and the physical address are printed with `%p` so they show as
+  full 64-bit hex values.
+
+**Question**
+
+> Explain the output of `vmprint` in terms of Fig 3-4 from the text. What does
+> page 0 contain? What is in page 2? When running in user mode, could the process
+> read/write the memory mapped by page 1? What does the third to last page contain?
+
+Idea: page 0 is the mapped user program (text/data), page 2 is the user stack;
+page 1 is the guard page (its PTE has no `PTE_U`, so the process can neither read
+nor write it — any access faults); the third-to-last page is the trapframe.
+Correlate the leaf PTE indices and their permission bits with Fig 3-4.
+
+**Verification**
+
+```bash
+make qemu        # boot output should include "page table 0x..." before init starts
+make grade       # pte printout test must pass
+```
 
 ### Detect which pages have been accessed (hard)
 Implement the `pgaccess()` system call that reports which pages have been accessed.
