@@ -175,16 +175,50 @@ Prints
 After `y=` an **unspecified/garbage value** is
   printed: the second `%d` reads `a2`, which the caller never set up.
 
-### Backtrace (moderate) — TODO
+### Backtrace (moderate) — DONE
 
-Implement a `backtrace()` function in `kernel/printf.c` that walks up the stack
+Implement a `backtrace()` function in [`kernel/printf.c`](./xv6_for_Lab4/kernel/printf.c) that walks up the stack
 using frame pointers and prints the saved return address in each stack frame.
 Insert a call to it in `sys_sleep`, and add a call from `panic` as well.
 
-Plan: read the frame pointer with an `r_fp()` helper added to `kernel/riscv.h`,
-walk saved return address at `-8(fp)` / saved frame pointer at `-16(fp)`, and stop
-using `PGROUNDDOWN(fp)` (one page = one kernel stack). Verify with `bttest` and
-`addr2line -e kernel/kernel`.
+**How the pieces fit together**
+
+GCC compiles the kernel with `-fno-omit-frame-pointer` ([`Makefile`](./xv6_for_Lab4/Makefile)), so every kernel
+function keeps its frame pointer in register `s0`. Each stack frame holds the return
+address at `fp - 8` and the caller's frame pointer at `fp - 16`, so following those
+two slots walks the whole call chain. Each kernel stack is exactly one page
+(`proc_mapstacks()` maps `PGSIZE`), so `PGROUNDDOWN(fp)` detects when the walk has
+left the stack and stops.
+
+Changes made:
+
+- [`kernel/riscv.h`](./xv6_for_Lab4/kernel/riscv.h) — added `r_fp()` (inline asm `mv %0, s0`) to read the frame
+  pointer.
+- [`kernel/printf.c`](./xv6_for_Lab4/kernel/printf.c) — implemented `backtrace()`: loop printing `*(uint64 *)(fp-8)`
+  and stepping `fp = *(uint64 *)(fp-16)`, stopping when `PGROUNDDOWN(fp)` changes;
+  also added a `backtrace()` call in `panic()` before its infinite loop.
+- [`kernel/defs.h`](./xv6_for_Lab4/kernel/defs.h) — declared `void backtrace(void);` under `// printf.c`.
+- [`kernel/sysproc.c`](./xv6_for_Lab4/kernel/sysproc.c) — called `backtrace()` at the top of `sys_sleep()`.
+
+**Verification**
+
+```
+$ bttest
+backtrace:
+0x000000008000212c
+0x000000008000201e
+0x0000000080001d14
+$ addr2line -e kernel/kernel
+kernel/sysproc.c:58
+kernel/syscall.c:141
+kernel/trap.c:76
+```
+
+The three addresses resolve to `sys_sleep` (sysproc.c), the `syscalls[num]()`
+dispatch (syscall.c), and `usertrap()` (trap.c) — exactly the kernel call chain
+behind `bttest`'s `sleep(1)`. The walk stops after `usertrap` because its frame
+holds no valid saved frame pointer (`uservec` reaches it by jumping, not calling).
+
 
 ### Alarm (hard) — TODO
 
