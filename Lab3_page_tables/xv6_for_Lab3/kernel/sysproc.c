@@ -74,7 +74,33 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  uint64 va;        // arg0: virtual address
+  int npages;       // arg1: number of pages
+  uint64 uaddr;     // arg2: user space address to store accessed bits
+  uint64 abits = 0;    // temp variable to store accessed bits
+  struct proc *p = myproc();
+
+  // Get the arguments from the user stack
+  argaddr(0, &va);
+  argint(1, &npages);
+  argaddr(2, &uaddr);
+  
+  if (npages <= 0 || npages > 64) {
+    return -1; // Invalid number of pages
+  }
+
+  for(int i = 0; i < npages; i++){
+    pte_t *pte = walk(p->pagetable, va + i*PGSIZE, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0)
+      continue;                   // the page is not mapped, skip
+    if(*pte & PTE_A){
+      abits |= (1 << i);          // the page is accessed → set the i-th bit
+      *pte &= ~PTE_A;             // clear the A bit for next detection
+    }
+  }
+
+  if(copyout(p->pagetable, uaddr, (char*)&abits, sizeof(abits)) < 0)
+    return -1; // Error in copying out the accessed bits to user space
   return 0;
 }
 #endif

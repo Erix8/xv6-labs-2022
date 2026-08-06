@@ -232,7 +232,80 @@ make grade       # pte printout test must pass
 ```
 
 ### Detect which pages have been accessed (hard)
-Implement the `pgaccess()` system call that reports which pages have been accessed.
-It takes the starting virtual address, the number of pages to check, and a buffer
-to store the results as a bitmask. RISC-V hardware sets the `PTE_A` access bit in
-the PTE on TLB misses; you must inspect and clear this bit.
+
+Some garbage collectors (a form of automatic memory management) benefit from
+knowing which pages have been accessed (read or write). RISC-V's hardware page
+walker automatically sets the `PTE_A` (Accessed) bit in a PTE whenever it resolves
+a TLB miss. This exercise adds a `pgaccess()` system call that inspects these bits
+and reports them to userspace as a bitmask.
+
+**UNIX interfaces used**
+
+| Interface | Kind | Description |
+| --- | --- | --- |
+| `pgaccess(va, npages, mask)` | new system call | Report which pages in `[va, va+npages*PGSIZE)` were accessed; page *i* → bit *i* (LSB = first page) |
+| `PTE_A` | new kernel macro ([`kernel/riscv.h`](./xv6_for_Lab3/kernel/riscv.h)) | `1L << 6` — the Accessed bit; set by hardware on TLB misses, cleared by software |
+| `argaddr(0/2, ...)` | kernel arg parser ([`kernel/syscall.c`](./xv6_for_Lab3/kernel/syscall.c)) | Fetch the start address and the user bitmask pointer |
+| `argint(1, &npages)` | kernel arg parser ([`kernel/syscall.c`](./xv6_for_Lab3/kernel/syscall.c)) | Fetch the number of pages to check |
+| `walk(pagetable, va, 0)` | kernel VM helper ([`kernel/vm.c`](./xv6_for_Lab3/kernel/vm.c)) | Find the leaf PTE for a user virtual address without allocating |
+| `copyout(...)` | kernel VM helper ([`kernel/vm.c`](./xv6_for_Lab3/kernel/vm.c)) | Copy the kernel-side bitmask back to the user buffer |
+| `pgtbltest` | user test ([`user/pgtbltest.c`](./xv6_for_Lab3/user/pgtbltest.c)) | `pgaccess_test`: accesses pages 1, 2, 30 then checks the returned bitmask |
+
+**How the pieces fit together**
+
+```
+user space                                kernel
+──────────                                ──────
+user/pgtbltest.c                          syscall.h:  SYS_pgaccess 30 (already wired)
+  buf = malloc(32*PGSIZE);                syscall.c:  syscalls[SYS_pgaccess] = sys_pgaccess
+  pgaccess(buf, 32, &abits)               user/usys.pl: entry("pgaccess") (already generated)
+        │                                 user/user.h: int pgaccess(void*,int,void*) (already)
+        ▼                                        │
+                                     sysproc.c: sys_pgaccess()
+                                       argaddr(0, &va);  argint(1, &npages);
+                                       argaddr(2, &uaddr);
+                                       for each page i:
+                                         pte = walk(p->pagetable, va + i*PGSIZE, 0)
+                                         if pte valid && PTE_A set:
+                                           abits |= (1 << i);
+                                           *pte &= ~PTE_A;      // clear for next call
+                                       copyout(p->pagetable, uaddr, &abits, ...)
+```
+
+**Implementation steps**
+
+1. **[`kernel/riscv.h`](./xv6_for_Lab3/kernel/riscv.h)** — define the access bit near
+   the other PTE flags (RISC-V privileged spec: bit 6):
+   ```c
+   #define PTE_A (1L << 6) // accessed
+   ```
+2. **[`kernel/sysproc.c`](./xv6_for_Lab3/kernel/sysproc.c) — `sys_pgaccess()`** —
+   replace the provided stub:
+   - parse the three arguments (`argaddr` ×2, `argint` ×1);
+   - reject `npages <= 0` or a page count above a sane cap (e.g. 64);
+   - loop `i` in `[0, npages)`: `va + i*PGSIZE` → `walk(..., 0)`;
+   - skip unmapped pages (`pte == 0 || !(PTE_V)`); if `PTE_A` is set, set bit `i`
+     in a kernel-side temp and **clear `PTE_A`**;
+   - `copyout` the temp bitmask to the user buffer; return `0`, or `-1` on error.
+
+**Key points**
+
+- `PTE_A` is the RISC-V **Accessed** bit (`1 << 6`); hardware sets it on a TLB-miss
+  page-table walk, software clears it.
+- Use `walk(..., alloc=0)` so unmapped addresses just return `0` — never allocate a
+  page table page here.
+- Build the bitmask in a **kernel temporary** and `copyout` it once at the end
+  (safer than writing into user memory repeatedly).
+- **Always clear `PTE_A`** after reading it; otherwise the bit stays set forever
+  and you cannot tell what was accessed since the last `pgaccess()` call.
+- The first page (LSB) corresponds to `va`, page *i* to `va + i*PGSIZE`.
+- Note that `argint`/`argaddr` return `void` in this xv6 — legality is checked by
+  `walk` and `copyout`, not by the argument fetch.
+
+**Verification**
+
+```bash
+make qemu        # inside qemu:
+pgtbltest        # pgaccess_test: OK — all tests succeeded
+make grade       # official grading script
+```

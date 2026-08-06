@@ -1,0 +1,91 @@
+Lab 3: Page tables - answers to the questions
+
+Q1 (Speed up system calls)
+--------------------------
+Which other xv6 system call(s) could be made faster using this shared page?
+Explain how.
+
+A:
+The shared read-only page (USYSCALL) lets userspace read small, slowly
+changing pieces of kernel state without trapping. Good candidates are
+system calls whose result is small, mostly read-only, and can tolerate
+a slightly stale snapshot.
+
+- getpid(): already done in this lab. The PID never changes during the
+  lifetime of the process, so publishing it on the shared page is
+  completely safe and eliminates the ecall entirely.
+
+- uptime(): xv6 keeps a global "ticks" counter that is incremented by
+  the timer interrupt. The kernel could publish the current value of
+  ticks on the shared page (e.g. update it in the timer interrupt), and
+  userspace would read it directly. A user interested in coarse-grained
+  time would avoid a trap on every call. (The value could be a few
+  clock ticks stale, which is usually acceptable.)
+
+- sbrk(0): this call just returns the current heap size p->sz. The
+  kernel could publish p->sz on the shared page and update it whenever
+  sbrk/growproc changes it. sbrk(0) would then be a plain load.
+
+- getppid() (if it existed): the parent PID is set at fork() time and
+  changes rarely (only when the parent exits and the child is reparented
+  to init), so it could also be cached on the shared page.
+
+The general rule: any system call that returns small, read-only kernel
+state that is updated in lockstep with the kernel's real state can be
+moved into this shared page. The trade-off is that the user always sees
+a snapshot that may be slightly stale between kernel updates, so it is
+only suitable for data where this is acceptable.
+
+Q2 (Print a page table)
+-----------------------
+Explain the output of vmprint in terms of Fig 3-4 from the text.  What
+does page 0 contain? What is in page 2?  When running in user mode,
+could the process read/write the memory mapped by page 1?  What does
+the third to last page contain?
+
+A:
+vmprint prints the Sv39 three-level page table of the first process
+(init, pid==1) right after exec("/init") has completed. The tree
+structure matches Fig 3-4: low virtual addresses hold the program
+image (text/data/stack), and the very top of the address space holds
+the trapframe and the trampoline.
+
+Top and middle levels (page-table pages):
+- " ..0:" and " ..255:" at depth 1 are level-2 PTEs that point to
+  lower-level page-table pages (their PTE has no R/W/X bits).
+- " .. ..0:" and " .. ..511:" are level-1 page-table pages.
+
+Leaf PTEs for low addresses (the program image):
+- page 0 (.. .. ..0): pte 0x...1b = PTE_V|PTE_R|PTE_X|PTE_U.
+  It contains the init process's text (code). The PTE is readable and
+  executable in user mode.
+- page 1 (.. .. ..1): pte 0x...17 = PTE_V|PTE_R|PTE_W|PTE_U.
+  It contains the init process's data. In user mode the process CAN
+  read AND write this page because PTE_W is set and PTE_U is set.
+- page 2 (.. .. ..2): pte 0x...07 = PTE_V|PTE_R|PTE_W (no PTE_U).
+  This is the stack guard page, created by exec() (uvmclear() removes
+  PTE_U from the first of the two freshly allocated stack pages).
+  Because PTE_U is clear, a user-mode access to this page would fault -
+  it is intentionally inaccessible.
+- page 3 (.. .. ..3): pte 0x...17 = PTE_V|PTE_R|PTE_W|PTE_U.
+  This is the user stack (init's stack). It is readable and writable in
+  user mode.
+
+Leaf PTEs for high addresses:
+- .. .. ..509: pte 0x...13 = PTE_V|PTE_R|PTE_U (read-only for user).
+  This is the USYSCALL page added in the first part of this lab. The
+  third-to-last page of the address space contains the shared
+  read-only struct usyscall, i.e. the process's PID, which userspace
+  reads directly via ugetpid().
+- .. .. ..510: pte 0x...07 = PTE_V|PTE_R|PTE_W (no PTE_U).
+  This is the trapframe page, used by the trampoline to save/restore
+  user registers; it is not accessible from user mode.
+- .. .. ..511: pte 0x...0b = PTE_V|PTE_R|PTE_X (no PTE_U).
+  This is the trampoline page, containing the kernel entry/exit code;
+  kernel-only, executable but not user-accessible.
+
+So, mapping the vmprint output onto Fig 3-4: page 0 = text, page 1 =
+data, page 2 = (stack) guard page, page 3 = stack, and the top of the
+address space holds the trampoline (last page) and trapframe
+(second-to-last); the third-to-last page is the USYSCALL shared page
+used to speed up getpid().
