@@ -23,6 +23,12 @@ struct {
   struct run *freelist;
 } kmem;
 
+// Reference count for each physical page.
+// Index = physical address >> PGSHIFT (i.e., pa / 4096).
+// Array size is PHYSTOP/PGSIZE, a compile-time constant.
+#define PA2IDX(pa) (((uint64)(pa)) >> PGSHIFT)
+static int refcnt[PHYSTOP / PGSIZE];
+
 void
 kinit()
 {
@@ -39,6 +45,17 @@ freerange(void *pa_start, void *pa_end)
     kfree(p);
 }
 
+// Increment the reference count of the physical page pa.
+// Called when a page is newly shared by another page table
+// (e.g., by fork() via uvmcopy()).
+void
+krefinc(void *pa)
+{
+  acquire(&kmem.lock);
+  refcnt[PA2IDX(pa)]++;
+  release(&kmem.lock);
+}
+
 // Free the page of physical memory pointed at by pa,
 // which normally should have been returned by a
 // call to kalloc().  (The exception is when
@@ -51,14 +68,26 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  acquire(&kmem.lock);
+
+  if(refcnt[PA2IDX(pa)] > 1){
+    // Other page tables still reference this page:
+    // only decrement the count, do not memset nor
+    // put the page back on the free list.
+    refcnt[PA2IDX(pa)]--;
+    release(&kmem.lock);
+    return;
+  }
+
+  // ref == 1 (last reference) or ref == 0 (initialization
+  // via freerange()/kinit()): really free the page.
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
-
   r = (struct run*)pa;
-
-  acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
+  refcnt[PA2IDX(pa)] = 0;
+
   release(&kmem.lock);
 }
 
@@ -72,8 +101,10 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    refcnt[PA2IDX(r)] = 1; // the page just got its first reference
+  }
   release(&kmem.lock);
 
   if(r)

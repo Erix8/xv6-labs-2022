@@ -298,17 +298,19 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 
 // Given a parent process's page table, copy
 // its memory into a child's page table.
-// Copies both the page table and the
-// physical memory.
+// In the copy-on-write version, the child shares the
+// parent's physical pages instead of copying them.
+// For pages that were writable, clear PTE_W in both
+// parent and child and mark them as PTE_COW, so that
+// a write to a shared page triggers a page fault.
 // returns 0 on success, -1 on failure.
-// frees any allocated pages on failure.
+// frees any additional references on failure.
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -317,11 +319,23 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    if(flags & PTE_W){
+      // The page was writable, so after fork it becomes a COW page:
+      // clear PTE_W in both parent and child and set PTE_COW.
+      // This ensures either process writing the shared page faults.
+      *pte = (*pte & ~PTE_W) | PTE_COW;
+      flags = (flags & ~PTE_W) | PTE_COW;
+    }
+
+    // The child adds one more reference to the shared physical page.
+    krefinc((void*)pa);
+
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      // Undo the reference added above, then unwind the
+      // mappings already installed (each uvmunmap kfree
+      // decrements the reference count).
+      kfree((void*)pa);
       goto err;
     }
   }
@@ -345,6 +359,65 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+// Handle a COW page fault for virtual address va in the given page table.
+// If the page is a COW page, allocate a new physical page, copy the
+// original contents, install the new page in the page table with PTE_W
+// set and PTE_COW cleared, and drop the mapping's reference to the old
+// shared page.  Called both from the usertrap() store page-fault handler
+// and from copyout(), which writes user memory directly and therefore
+// needs to simulate a COW fault.
+// Returns 0 on success (the page is writable afterwards), -1 on failure
+// (illegal write to a read-only/non-COW page, or out of memory; the
+// caller should kill the process).
+int
+cowalloc(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem;
+
+  if(va >= MAXVA)
+    return -1;
+
+  va = PGROUNDDOWN(va);
+  if((pte = walk(pagetable, va, 0)) == 0)
+    return -1;
+  if((*pte & PTE_V) == 0)
+    return -1;
+
+  if((*pte & PTE_COW) == 0){
+    // Not a COW page: if it is already writable there is
+    // nothing to do; otherwise the write is illegal.
+    if(*pte & PTE_W)
+      return 0;
+    return -1;
+  }
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+
+  if((mem = kalloc()) == 0)
+    return -1; // no free memory: caller kills the process
+
+  // Copy the contents *before* freeing the old page: kfree()
+  // overwrites the page with junk when the last reference goes away.
+  memmove(mem, (char*)pa, PGSIZE);
+
+  // Install the new private, writable page.  Keep the other flags
+  // (V/R/X/U), clear PTE_W and PTE_COW, then set PTE_W.
+  *pte = PA2PTE(mem) | (flags & ~PTE_W & ~PTE_COW) | PTE_W;
+
+  // Flush the stale TLB entry that still maps the old page
+  // as read-only.
+  sfence_vma();
+
+  // This process no longer references the old shared page.
+  kfree((void*)pa);
+
+  return 0;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
@@ -355,9 +428,19 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+
+    // A COW page must be made private and writable before the kernel
+    // writes to it, just like a COW page fault would do.  The kernel
+    // writes user memory via physical addresses and never triggers a
+    // user-mode page fault, so simulate it here.  Already writable
+    // pages are handled with no extra work.
+    if(cowalloc(pagetable, va0) != 0)
+      return -1;
+
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
