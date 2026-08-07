@@ -12,7 +12,21 @@
 
 
 struct thread {
-  char       stack[STACK_SIZE]; /* the thread's stack */
+  uint64     ra;                 /* 0:   saved return address */
+  uint64     sp;                 /* 8:   saved stack pointer */
+  uint64     s0;                 /* 16:  callee-saved registers */
+  uint64     s1;                 /* 24 */
+  uint64     s2;                 /* 32 */
+  uint64     s3;                 /* 40 */
+  uint64     s4;                 /* 48 */
+  uint64     s5;                 /* 56 */
+  uint64     s6;                 /* 64 */
+  uint64     s7;                 /* 72 */
+  uint64     s8;                 /* 80 */
+  uint64     s9;                 /* 88 */
+  uint64     s10;                /* 96 */
+  uint64     s11;                /* 104 */
+  char       stack[STACK_SIZE];  /* the thread's stack */
   int        state;             /* FREE, RUNNING, RUNNABLE */
 };
 struct thread all_thread[MAX_THREAD];
@@ -62,6 +76,7 @@ thread_schedule(void)
      * Invoke thread_switch to switch from t to next_thread:
      * thread_switch(??, ??);
      */
+    thread_switch((uint64)t, (uint64)next_thread);
   } else
     next_thread = 0;
 }
@@ -76,6 +91,11 @@ thread_create(void (*func)())
   }
   t->state = RUNNABLE;
   // YOUR CODE HERE
+  t->ra = (uint64)func;                   /* first switch jumps to func */
+  t->sp = (uint64)&t->stack[STACK_SIZE];  /* RISC-V stack grows down */
+  t->s0 = t->s1 = t->s2 = t->s3 = t->s4 = 0;
+  t->s5 = t->s6 = t->s7 = t->s8 = t->s9 = 0;
+  t->s10 = t->s11 = 0;
 }
 
 void 
