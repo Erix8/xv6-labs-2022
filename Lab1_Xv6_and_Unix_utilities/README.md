@@ -1,16 +1,31 @@
-# Lab: Xv6 and Unix utilities
-
-> MIT 6.S081 / 6.828 Fall 2022 Lab 1. This lab familiarizes you with xv6 and its
-> system calls by implementing five classic Unix utilities
-> (sleep / pingpong / primes / find / xargs) as xv6 user programs.
+# Lab 1: Xv6 and Unix utilities
 
 ## Overview
 
-In this lab you will implement several classic Unix utilities on xv6 to become familiar
-with its system calls and the user-program environment. The official lab description,
-hints, and grading criteria can be found on the MIT course page:
+This lab familiarizes you with xv6 and its system calls. It is the only lab that is
+purely about *user space*: you implement five classic Unix utilities
+(sleep / pingpong / primes / find / xargs) as ordinary xv6 user programs, which is
+also a warm-up for reading xv6 source code and using the build/test infrastructure.
 
+For details, hints, and grading criteria, please refer to the official MIT lab page:
 https://pdos.csail.mit.edu/6.828/2022/labs/util.html
+
+### Boot xv6
+
+The lab repository is set up so that `git clone` checks out the `util` branch. Build
+and run xv6 with:
+
+```sh
+make qemu
+```
+
+You should see the xv6 kernel boot and then a shell prompt `$`. Try `ls` to list the
+initial file system, and `Ctrl-p` to make the kernel print the process table (you
+will see one line for `init` and one for `sh`). To quit qemu type `Ctrl-a x`.
+
+**Making sense of the initial file system:** the files listed by `ls` are the
+programs that `mkfs` baked into `fs.img`; most of them are the standard xv6 user
+programs you can run from the shell.
 
 ### User-program basics in xv6
 
@@ -57,6 +72,14 @@ https://pdos.csail.mit.edu/6.828/2022/labs/util.html
 4. End with an explicit `exit(0)` — unlike Linux, xv6 has no fallback "return from
    main" path that terminates the process for you.
 
+**Expected output**
+
+```
+$ sleep 10
+(nothing happens for a little while)
+$
+```
+
 Solution: [`user/sleep.c`](./xv6_for_Lab1/user/sleep.c)
 
 ### 2. pingpong (easy)
@@ -92,6 +115,15 @@ parent's byte) before writing its reply back. But that is not a correct general 
 once messages grow larger or more round trips occur, the two directions' data gets
 mixed into one stream and both sides blocking on `write` (full pipe) can deadlock.
 That is why the lab explicitly requires *a pair of pipes, one for each direction*.
+
+**Expected output**
+
+```
+$ pingpong
+4: received ping
+3: received pong
+$
+```
 
 Solution: [`user/pingpong.c`](./xv6_for_Lab1/user/pingpong.c)
 
@@ -129,8 +161,27 @@ pipe, forks a child, and forwards every subsequent number that is **not** divisi
      with `num % p != 0` to the right pipe, then close everything and `wait`.
 4. Key points: only create a stage when it's actually needed; close all unneeded fds
    immediately, otherwise `read` will never see EOF and xv6 runs out of resources.
+   Write raw 4-byte `int`s to the pipes rather than formatted ASCII.
 
 ![image](https://swtch.com/~rsc/thread/sieve.gif)
+
+**Expected output**
+
+```
+$ primes
+prime 2
+prime 3
+prime 5
+prime 7
+prime 11
+prime 13
+prime 17
+prime 19
+prime 23
+prime 29
+prime 31
+$
+```
 
 Solution: [`user/primes.c`](./xv6_for_Lab1/user/primes.c)
 
@@ -161,6 +212,21 @@ Solution: [`user/primes.c`](./xv6_for_Lab1/user/primes.c)
    - Close the fd when done.
 3. Reference: [`user/ls.c`](./xv6_for_Lab1/user/ls.c) shows the canonical idiom for walking a directory.
 
+**Expected output** (file system contains `b`, `a/b`, and `a/aa/b`)
+
+```
+$ echo > b
+$ mkdir a
+$ echo > a/b
+$ mkdir a/aa
+$ echo > a/aa/b
+$ find . b
+./b
+./a/b
+./a/aa/b
+$
+```
+
 Solution: [`user/find.c`](./xv6_for_Lab1/user/find.c)
 
 ### 5. xargs (moderate)
@@ -188,6 +254,19 @@ Solution: [`user/find.c`](./xv6_for_Lab1/user/find.c)
 5. Note: the real Unix `xargs -n 1` batches one argument per command — exactly what this
    lab asks for, so no batching optimization is needed.
 
+**Expected output** (run the provided shell script `xargstest.sh`)
+
+```
+$ sh < xargstest.sh
+$ $ $ $ $ $ hello
+hello
+hello
+$ $
+```
+
+(The many `$` are printed because the xv6 shell does not realize it is reading commands
+from a file rather than from the console.)
+
 Solution: [`user/xargs.c`](./xv6_for_Lab1/user/xargs.c)
 
 ## Testing
@@ -199,3 +278,19 @@ make grade          # run all grading tests
 make GRADEFLAGS=sleep grade      # grade only sleep
 ./grade-lab-util pingpong        # or invoke the grading script directly
 ```
+
+Before handing in, remember to create `time.txt` containing a single integer — the
+number of hours spent on the lab — and to `git add` / `git commit` it, as described in
+the lab description.
+
+## Optional challenge exercises
+
+From the lab description (not graded):
+
+- Write an `uptime` program that prints the uptime in ticks using the `uptime` system
+  call. (easy)
+- Support regular expressions in name matching for `find`; `grep.c` has some primitive
+  support. (easy)
+- Improve the shell `user/sh.c`: suppress the `$` when processing commands from a file
+  (moderate), add `wait` support (easy), command lists separated by `;` (moderate),
+  sub-shells `(` `)` (moderate), tab completion (easy), command history (moderate), etc.

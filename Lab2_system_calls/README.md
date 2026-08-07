@@ -8,6 +8,23 @@ calls work and exposes you to some of the internals of the xv6 kernel.
 For details, hints, and grading criteria, please refer to the official MIT lab page:
 https://pdos.csail.mit.edu/6.828/2022/labs/syscall.html
 
+### Recommended reading before coding
+
+The lab description asks you to read Chapter 2 of the xv6 book, plus Sections 4.3
+and 4.4 of Chapter 4, and to look at the files that route a system call:
+
+- **User-space stubs**: [`user/usys.S`](./xv6_for_Lab2/user/usys.S), generated from
+  [`user/usys.pl`](./xv6_for_Lab2/user/usys.pl) by `make`; declarations in
+  [`user/user.h`](./xv6_for_Lab2/user/user.h).
+- **Kernel-space dispatch**: [`kernel/syscall.c`](./xv6_for_Lab2/kernel/syscall.c)
+  and [`kernel/syscall.h`](./xv6_for_Lab2/kernel/syscall.h).
+- **Process-related code**: [`kernel/proc.h`](./xv6_for_Lab2/kernel/proc.h) and
+  [`kernel/proc.c`](./xv6_for_Lab2/kernel/proc.c).
+
+Before the assignments, `make grade` fails because the grading script cannot exec
+`trace` or `sysinfotest` — the system calls they need do not exist yet. Adding them
+is exactly this lab's job.
+
 ### How a system call traps into the kernel
 
 Before diving into gdb, it helps to understand the full path a system call takes from
@@ -335,6 +352,33 @@ user/usys.pl  generates the stub:            ▼
   traced too — this is why the `forkforkfork` example shows traced `fork` calls with
   *different* pids (each descendant inherited the mask from `usertests`).
 
+**Expected output** (from the lab description; pids may differ)
+
+```
+$ trace 32 grep hello README
+3: syscall read -> 1023
+3: syscall read -> 966
+3: syscall read -> 70
+3: syscall read -> 0
+$
+$ trace 2147483647 grep hello README
+4: syscall trace -> 0
+4: syscall exec -> 3
+4: syscall open -> 3
+4: syscall read -> 1023
+4: syscall read -> 966
+4: syscall read -> 70
+4: syscall read -> 0
+4: syscall close -> 0
+$
+$ grep hello README
+$
+```
+
+Note: if a test passes inside qemu but times out under `make grade`, the lab
+description suggests testing on Athena — some tests are too computationally
+intensive for a local machine (especially under WSL).
+
 ### Sysinfo (moderate)
 
 Add a `sysinfo` system call that collects information about the running system.
@@ -426,3 +470,24 @@ user/usys.pl  entry("sysinfo")               │
 - Unlike `trace`, `sysinfo` does **not** modify per-process state and needs no
   `fork()` change — every process can ask the kernel at any time and gets a fresh
   snapshot.
+
+## Testing
+
+In the `xv6_for_Lab2` directory:
+
+```sh
+make grade          # run all grading tests
+```
+
+The gdb answers for the easy exercise are recorded in
+[`answers-syscall.txt`](./xv6_for_Lab2/answers-syscall.txt), as required by the lab
+description. Before handing in, remember to create `time.txt` containing a single
+integer — the number of hours spent on the lab — and to `git add` / `git commit` it.
+
+## Optional challenge exercises
+
+From the lab description (not graded):
+
+- Print the system call **arguments** for traced system calls, not just the return
+  value. (easy)
+- Compute the load average and export it through `sysinfo`. (moderate)

@@ -125,7 +125,7 @@ restores `sepc` and `sstatus` because `yield()` may have caused other traps.
 
 ## Exercises
 
-### RISC-V assembly (easy) — DONE
+### RISC-V assembly (easy)
 
 Understand RISC-V assembly by reading the generated
 [`user/call.asm`](./xv6_for_Lab4/user/call.asm) for the functions `g`, `f`, and
@@ -175,7 +175,7 @@ Prints
 After `y=` an **unspecified/garbage value** is
   printed: the second `%d` reads `a2`, which the caller never set up.
 
-### Backtrace (moderate) — DONE
+### Backtrace (moderate)
 
 Implement a `backtrace()` function in [`kernel/printf.c`](./xv6_for_Lab4/kernel/printf.c) that walks up the stack
 using frame pointers and prints the saved return address in each stack frame.
@@ -220,7 +220,7 @@ behind `bttest`'s `sleep(1)`. The walk stops after `usertrap` because its frame
 holds no valid saved frame pointer (`uservec` reaches it by jumping, not calling).
 
 
-### Alarm (hard) — DONE
+### Alarm (hard)
 
 Add `sigalarm(interval, handler)` and `sigreturn()` system calls. After every `n`
 ticks of CPU time a process consumes, the kernel should call the user's handler
@@ -309,6 +309,26 @@ $ usertests -q
 `./grade-lab-traps` (official grader) reports **Score: 95/95** — answers-traps.txt,
 backtrace (bttest + addr2line), all four `alarmtest` tests, `usertests`, and
 `time.txt` all pass. The `time.txt` file records the hours spent on the lab.
+
+## Testing
+
+In the `xv6_for_Lab4` directory:
+
+```sh
+make grade          # run all grading tests
+```
+
+The written answers for the RISC-V assembly exercise are recorded in
+[`answers-traps.txt`](./xv6_for_Lab4/answers-traps.txt), as required by the lab
+description. Before handing in, remember to create `time.txt` containing a single
+integer — the number of hours spent on the lab — and to `git add` / `git commit` it.
+
+## Optional challenge exercises
+
+From the lab description (not graded):
+
+- Print the names of the functions and line numbers in `backtrace()` instead of
+  numerical addresses. (hard)
 
 
 

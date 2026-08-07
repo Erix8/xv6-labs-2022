@@ -8,6 +8,21 @@ and to detect which pages have been accessed.
 For details, hints, and grading criteria, please refer to the official MIT lab page:
 https://pdos.csail.mit.edu/6.828/2022/labs/pgtbl.html
 
+### Recommended reading before coding
+
+The lab description asks you to read Chapter 3 of the xv6 book and to look at the
+files that implement virtual memory:
+
+- [`kernel/memlayout.h`](./xv6_for_Lab3/kernel/memlayout.h) — the layout of memory.
+- [`kernel/vm.c`](./xv6_for_Lab3/kernel/vm.c) — most of the virtual memory (VM) code.
+- [`kernel/kalloc.c`](./xv6_for_Lab3/kernel/kalloc.c) — allocating and freeing physical memory.
+- The [RISC-V privileged architecture manual](https://github.com/riscv/riscv-isa-manual/releases/download/Ratified-IMFDQC-and-Priv-v1.11/riscv-privileged-20190608.pdf) may also help (PTE bits, Sv39 layout).
+
+### Reference links
+
+- [xv6 book (Chapter 3 "Page tables" is the relevant reading)](https://pdos.csail.mit.edu/6.828/2022/xv6/book-riscv-rev3.pdf)
+- [RISC-V privileged architecture manual](https://github.com/riscv/riscv-isa-manual/releases/download/Ratified-IMFDQC-and-Priv-v1.11/riscv-privileged-20190608.pdf)
+
 ## Exercises
 
 ### Speed up system calls (easy)
@@ -309,3 +324,27 @@ make qemu        # inside qemu:
 pgtbltest        # pgaccess_test: OK — all tests succeeded
 make grade       # official grading script
 ```
+
+## Testing
+
+In the `xv6_for_Lab3` directory:
+
+```sh
+make grade          # run all grading tests
+```
+
+The lab has three exercises: `ugetpid` (speed up system calls), `pte printout`
+(vmprint), and `pgaccess_test` (detect accessed pages). The written questions for
+the easy and hard exercises are answered in
+[`answers-pgtbl.txt`](./xv6_for_Lab3/answers-pgtbl.txt), as required by the lab
+description. Before handing in, remember to create `time.txt` containing a single
+integer — the number of hours spent on the lab — and to `git add` / `git commit` it.
+
+## Optional challenge exercises
+
+From the lab description (not graded):
+
+- Use **super-pages** to reduce the number of PTEs in page tables.
+- **Unmap the first page** of a user process so that dereferencing a null pointer
+  faults; change `user.ld` to start the user text segment at e.g. 4096 instead of 0.
+- Add a system call that reports **dirty pages** (modified pages) using `PTE_D`.
