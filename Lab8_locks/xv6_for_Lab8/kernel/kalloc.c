@@ -18,15 +18,18 @@ struct run {
   struct run *next;
 };
 
+// One free list per CPU, each with its own lock, to reduce
+// lock contention among CPUs calling kalloc() and kfree().
 struct {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+} kmem[NCPU];
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+  for(int i = 0; i < NCPU; i++)
+    initlock(&kmem[i].lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -56,10 +59,16 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  // Push_off turns off interrupts so that the result of cpuid()
+  // is reliable, since the CPU number is only safe to use when
+  // interrupts are disabled.
+  push_off();
+  int id = cpuid();
+  acquire(&kmem[id].lock);
+  r->next = kmem[id].freelist;
+  kmem[id].freelist = r;
+  release(&kmem[id].lock);
+  pop_off();
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -70,11 +79,37 @@ kalloc(void)
 {
   struct run *r;
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
+  // cpuid() is only safe to call with interrupts off, and we
+  // must stay on the same CPU while using its free list.
+  push_off();
+  int id = cpuid();
+
+  // Try this CPU's free list first.
+  acquire(&kmem[id].lock);
+  r = kmem[id].freelist;
   if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+    kmem[id].freelist = r->next;
+  release(&kmem[id].lock);
+
+  // If this CPU's free list is empty, steal one page from
+  // another CPU's free list.  Only one lock is held at a time,
+  // so there is no risk of deadlock.  Stealing is infrequent,
+  // so stealing a single page is enough.
+  if(!r){
+    for(int i = 0; i < NCPU; i++){
+      if(i == id)
+        continue;
+      acquire(&kmem[i].lock);
+      r = kmem[i].freelist;
+      if(r)
+        kmem[i].freelist = r->next;
+      release(&kmem[i].lock);
+      if(r)
+        break;
+    }
+  }
+
+  pop_off();
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk

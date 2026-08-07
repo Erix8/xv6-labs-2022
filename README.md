@@ -20,7 +20,7 @@ course information.
 
 | # | Lab | Summary | Progess |
 |---|-----|---------|---------|
-| 1 | [Xv6 & Unix Utilities](Lab1_Xv6_and_Unix_utilities/README.md) | Implement classic Unix utilities (sleep, pingpong, primes, find, xargs) in xv6. | ✅
+| 1 | [Unix Utilities](Lab1_Xv6_and_Unix_utilities/README.md) | Implement classic Unix utilities in xv6. | ✅
 | 2 | [System Calls](Lab2_system_calls/README.md) | Add new system calls (trace, sysinfo) and debugging with gdb. | ✅
 | 3 | [Page Tables](Lab3_page_tables/README.md) | Speed up getpid, print page tables, and detect accessed pages. | ✅
 | 4 | [Traps](Lab4_traps/README.md) | RISC-V assembly, backtrace, and user-level alarm handling. | ✅
