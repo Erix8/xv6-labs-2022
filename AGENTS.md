@@ -14,6 +14,9 @@
    - 用户向我**提问**时，回答一律使用**中文**；
    - 需要我**撰写文档**（README、报告等）时，一律使用**英文**；
    - 代码文件中的注释一律使用**英文**。
+5. **不撰写 handin/提交相关内容**：README、报告、answers 等文档只描述
+   **实验本身**（原理、实现、测试结果），**不包含** `make handin`、API key、
+   `git add` / `git commit` 等提交相关说明与提示。
 
 ---
 
@@ -33,7 +36,7 @@
   - 官方 hints；
   - 官方 plan of attack（若给出）；
   - 需要回答的 question（若有，提醒写入 `answers-*.txt`）；
-  - grading 与 提交要求（`time.txt`、`make grade`、`make handin`）；
+  - grading 与 提交要求（`time.txt`、`make grade`）；
   - Optional challenge exercises。
 - **没有找到 html**：立即向用户报告（例如"LabN 目录下未找到 html 指导文件"），
   等待用户指示后再继续。
@@ -192,7 +195,7 @@ In the `xv6_for_LabN` directory:
 ```
 
 - 若 lab 有 written answers，说明其位置（`answers-*.txt`）。
-- 提醒 `time.txt`（单个整数，实验耗时）需 `git add` / `git commit`。
+- 说明 `time.txt`（单个整数，实验耗时）文件已包含。
 - 如已实测，可附官方评分输出与分数（如 `Score: 110/110`）。
 
 ### 5. Optional challenge exercises
