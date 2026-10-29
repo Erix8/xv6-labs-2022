@@ -1,0 +1,88 @@
+Using gdb -- answers to the questions in the "Using gdb" exercise
+
+1. Looking at the backtrace output, which function called syscall?
+
+   usertrap() in kernel/trap.c called syscall().  When usertrap()
+   detects scause == 8 (an ecall from user space), it calls syscall()
+   directly:
+
+       if(r_scause() == 8){
+         ...
+         syscall();
+       }
+
+   The backtrace chain is: syscall <- usertrap <- ??.  The "??" frame
+   is not a real caller: uservec reaches usertrap() with a jr t0
+   (jump, not jalr/call), so no return address is pushed on the kernel
+   stack.  GDB blindly interprets the next stack slot as a return
+   address, and that slot holds the junk pattern 0x05 (memset(r, 5,
+   PGSIZE) in kernel/kalloc.c fills freshly allocated stack pages).
+
+2. What is the value of p->trapframe->a7 and what does that value
+   represent?
+
+   value = 0x7.  a7 is RISC-V register x17; by ABI convention it
+   carries the system call number (a0..a5 carry the arguments).
+   0x7 = SYS_exec (kernel/syscall.h).  This is the very first system
+   call of the machine: initcode (user/initcode.S) requesting
+   exec("/init", argv) to become the real init process.  syscall()
+   uses this value as an index into the syscalls[] dispatch table in
+   kernel/syscall.c.
+
+   (For completeness, p->trapframe->a0 is 0x24: offset 0x24 of the
+   first user page is exactly the "/init\0" string inside the
+   hand-assembled initcode[] byte array in kernel/proc.c, which
+   userinit() copies into the first user page because the file system
+   is not available yet at boot.)
+
+3. What was the previous mode that the CPU was in?
+
+   p /x $sstatus gives 0x22 = 0b0010_0010.  Decoding sstatus
+   (kernel/riscv.h and RISC-V privileged spec):
+
+       bit 8  SPP   = 0  -> previous mode was User (0=User, 1=Supervisor)
+       bit 5  SPIE  = 1  -> interrupts were enabled before the trap
+                            (in user mode)
+       bit 1  SIE   = 1  -> interrupts are enabled now (in supervisor mode)
+
+   SPP = 0 tells us the trap came from user mode, consistent with the
+   ecall from initcode.  usertrap() even checks this and panics if it
+   is not true:
+
+       if((r_sstatus() & SSTATUS_SPP) != 0)
+         panic("usertrap: not from user mode");
+
+4. Write down the assembly instruction the kernel is panicking at.
+   Which register corresponds to the variable num?
+
+   Search for the sepc value printed by the kernel page-fault panic in
+   kernel/kernel.asm:
+
+       80001ff4:  00002683   lw  a3,0(zero)   # 0 <_entry-0x80000000>
+
+   This is the compiled form of "num = *(int *)0;": it loads a word
+   from address 0 (register zero = x0, always 0) into a3.  So the
+   register that corresponds to the C variable num is a3 (x13).
+
+5. Why does the kernel crash?
+
+   *(int *)0 asks the CPU to load a word from virtual address 0.  The
+   kernel address-space map (xv6 book, figure 3-3) maps only CLINT
+   (0x2000000) upward and KERNBASE (0x80000000) upward; virtual
+   address 0 is not mapped at all.  The MMU page-table walk for
+   address 0 fails while the CPU is in S-mode, raising a load page
+   fault.  In RISC-V, exception code 13 (0xd) is the load page fault.
+   stval records the faulting virtual address (0, confirming the fault
+   is on address 0) and sepc records the faulting instruction address.
+
+   Because this fault happened in kernel mode, stvec points at
+   kernelvec, so kerneltrap() handles it.  devintr() returns 0 (this
+   is neither a device nor a timer interrupt), so kerneltrap() panics.
+
+6. What is the name of the binary that was running when the kernel
+   paniced?  What is its process id (pid)?
+
+   p->name is "initcode" and p->pid is 1.  The panic happened in the
+   very first system call of the machine (initcode's exec("/init")),
+   because the page-faulting instruction is in syscall(), which only
+   runs after a user ecall.
