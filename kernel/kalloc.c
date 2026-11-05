@@ -24,8 +24,8 @@ struct {
 } kmem;
 
 // Reference count for each physical page.
-#define PA2IDX(pa) (((uint64)(pa)) >> PGSHIFT)
-static int refcnt[PHYSTOP / PGSIZE];
+#define PA2IDX(pa) (((uint64)(pa) - KERNBASE) >> PGSHIFT)
+static int refcnt[(PHYSTOP - KERNBASE) / PGSIZE];
 
 void
 kinit()
