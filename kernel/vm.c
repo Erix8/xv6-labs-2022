@@ -369,16 +369,14 @@ cowalloc(pagetable_t pagetable, uint64 va)
   va = PGROUNDDOWN(va);
   if((pte = walk(pagetable, va, 0)) == 0)
     return -1;
-  if((*pte & PTE_V) == 0)
+  
+  // The target page does not allow user access.
+  if((*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
     return -1;
 
-  if((*pte & PTE_COW) == 0){
-    // Not a COW page: if it is already writable there is
-    // nothing to do; otherwise the write is illegal.
-    if(*pte & PTE_W)
-      return 0;
+  // Not a COW page.
+  if((*pte & PTE_COW) == 0)
     return -1;
-  }
 
   pa = PTE2PA(*pte);
   flags = PTE_FLAGS(*pte);
@@ -407,15 +405,24 @@ cowalloc(pagetable_t pagetable, uint64 va)
 int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
+  pte_t *pte;
   uint64 n, va0, pa0;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    
-    // A COW page must be made private and writable before the kernel
-    // writes to it, just like a COW page fault would do.
-    if(cowalloc(pagetable, va0) != 0)
+    if(va0 >= MAXVA)
       return -1;
+      
+    pte = walk(pagetable, va0, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
+
+    if(*pte & PTE_COW){
+      if(cowalloc(pagetable, va0) != 0)
+        return -1;
+    } else if((*pte & PTE_W) == 0){
+      return -1;
+    }
 
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
