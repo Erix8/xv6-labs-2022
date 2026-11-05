@@ -43,6 +43,16 @@ freerange(void *pa_start, void *pa_end)
     kfree(p);
 }
 
+// Increment the reference count of the physical page pa.
+// Called when a page is newly shared by another page table.
+void
+krefinc(void *pa)
+{
+  acquire(&kmem.lock);
+  refcnt[PA2IDX(pa)]++;
+  release(&kmem.lock);
+}
+
 // Free the page of physical memory pointed at by pa,
 // which normally should have been returned by a
 // call to kalloc().  (The exception is when

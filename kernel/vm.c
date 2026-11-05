@@ -308,7 +308,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -317,11 +316,22 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    if(flags & PTE_W){
+      // The page was writable, so after fork it becomes a COW page:
+      // clear PTE_W in both parent and child and set PTE_COW.
+      *pte = (*pte & ~PTE_W) | PTE_COW;
+      flags = (flags & ~PTE_W) | PTE_COW;
+    }
+
+    // The child adds one more reference to the shared physical page.
+    krefinc((void*)pa);
+
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      // Undo the reference added above, then unwind the
+      // mappings already installed (each uvmunmap kfree
+      // decrements the reference count).
+      kfree((void *)pa);
       goto err;
     }
   }
