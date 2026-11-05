@@ -39,8 +39,11 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE){
+    // Give kfree() one reference to release during initialization.
+    refcnt[PA2IDX(p)] = 1;
     kfree(p);
+  }
 }
 
 // Increment the reference count of the physical page pa.
@@ -66,17 +69,19 @@ kfree(void *pa)
     panic("kfree");
 
   acquire(&kmem.lock);
-  if(refcnt[PA2IDX(pa)] > 1){
-    // Other page tables still reference this page.
-    refcnt[PA2IDX(pa)] -= 1;
-  } else {
-    // Really free the page.
+
+  if(refcnt[PA2IDX(pa)] < 1)
+    panic("kfree: invalid reference count");
+
+  refcnt[PA2IDX(pa)]--;
+
+  if(refcnt[PA2IDX(pa)] == 0){
     memset(pa, 1, PGSIZE);
     r = (struct run*)pa;
     r->next = kmem.freelist;
     kmem.freelist = r;
-    refcnt[PA2IDX(pa)] = 0;
   }
+  
   release(&kmem.lock);
 }
 
