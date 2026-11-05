@@ -23,6 +23,10 @@ struct {
   struct run *freelist;
 } kmem;
 
+// Reference count for each physical page.
+#define PA2IDX(pa) (((uint64)(pa)) >> PGSHIFT)
+static int refcnt[PHYSTOP / PGSIZE];
+
 void
 kinit()
 {
@@ -51,14 +55,18 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
-
-  r = (struct run*)pa;
-
   acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
+  if(refcnt[PA2IDX(pa)] > 1){
+    // Other page tables still reference this page.
+    refcnt[PA2IDX(pa)] -= 1;
+  } else {
+    // Really free the page.
+    memset(pa, 1, PGSIZE);
+    r = (struct run*)pa;
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+    refcnt[PA2IDX(pa)] = 0;
+  }
   release(&kmem.lock);
 }
 
@@ -72,8 +80,10 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    refcnt[PA2IDX(r)] = 1;
+  }
   release(&kmem.lock);
 
   if(r)
