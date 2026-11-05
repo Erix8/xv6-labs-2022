@@ -411,6 +411,12 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    
+    // A COW page must be made private and writable before the kernel
+    // writes to it, just like a COW page fault would do.
+    if(cowalloc(pagetable, va0) != 0)
+      return -1;
+
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
