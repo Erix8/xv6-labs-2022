@@ -80,7 +80,9 @@ usertrap(void)
   if(which_dev == 2){
     if (p->alarm_interval > 0){
       p->alarm_ticks += 1;
-      if (p->alarm_ticks >= p->alarm_interval){
+      if (p->alarm_ticks >= p->alarm_interval && !p->alarm_active){
+        p->alarm_tf = *(p->trapframe);
+        p->alarm_active = 1;
         p->trapframe->epc = p->alarm_handler;
         p->alarm_ticks = 0;
       }

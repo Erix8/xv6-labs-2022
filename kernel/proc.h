@@ -107,4 +107,6 @@ struct proc {
   int alarm_interval;          // alarm interval in ticks, 0 = no alarm
   uint64 alarm_handler;        // user-defined alarm handler address
   int alarm_ticks;             // ticks since last alarm call
+  int alarm_active;            // 1 = alarm handler is currently running
+  struct trapframe alarm_tf;   // the trapframe when the alarm is triggered
 };
