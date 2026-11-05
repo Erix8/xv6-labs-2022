@@ -355,6 +355,52 @@ uvmclear(pagetable_t pagetable, uint64 va)
   *pte &= ~PTE_U;
 }
 
+int
+cowalloc(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem;
+
+  if(va >= MAXVA)
+    return -1;
+
+  va = PGROUNDDOWN(va);
+  if((pte = walk(pagetable, va, 0)) == 0)
+    return -1;
+  if((*pte & PTE_V) == 0)
+    return -1;
+
+  if((*pte & PTE_COW) == 0){
+    // Not a COW page: if it is already writable there is
+    // nothing to do; otherwise the write is illegal.
+    if(*pte & PTE_W)
+      return 0;
+    return -1;
+  }
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+
+  if((mem = kalloc()) == 0)
+    return -1; // no free memory: caller kills the process
+
+  // Copy the contents *before* freeing the old page.
+  memmove(mem, (char*)pa, PGSIZE);
+
+  // Install the new private, writable page.  Keep the other flags
+  // (V/R/X/U), clear PTE_W and PTE_COW, then set PTE_W.
+  *pte = PA2PTE(mem) | (flags & ~PTE_W & ~PTE_COW) | PTE_W;
+
+  sfence_vma();
+
+  // This process no longer references the old shared page.
+  kfree((void*)pa);
+
+  return 0;
+}
+
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
