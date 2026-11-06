@@ -29,15 +29,18 @@ barrier()
   // then increment bstate.round.
   pthread_mutex_lock(&bstate.barrier_mutex);
 
+  int current_round = bstate.round;
   bstate.nthread++;
+
   if (bstate.nthread == nthread) {
-    // All threads have reached this round.
     bstate.round++;
     bstate.nthread = 0;
     pthread_cond_broadcast(&bstate.barrier_cond);
   } else {
-    // Not all threads have arrived yet: go to sleep.
-    pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+    // Check the barrier rounds after waking up.
+    while (bstate.round == current_round) {
+      pthread_cond_wait(&bstate.barrier_cond, &bstate.barrier_mutex);
+    }
   }
 
   pthread_mutex_unlock(&bstate.barrier_mutex);
