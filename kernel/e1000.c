@@ -95,14 +95,39 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(struct mbuf *m)
 {
-  //
-  // Your code here.
-  //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
-  //
-  
+  uint32 idx;
+  acquire(&e1000_lock);
+
+  // Ask the E1000 for the TX ring index at which it's
+  // expecting the next packet.
+  idx = regs[E1000_TDT];
+
+  // Check if the ring is overflowing: the E1000 hasn't
+  // finished the previous transmission at this slot.
+  if ((tx_ring[idx].status & E1000_TXD_STAT_DD) == 0)
+  {
+    release(&e1000_lock);
+    return -1;
+  }
+
+  // Free the last mbuf that was transmitted from this
+  // descriptor, if there was one.
+  if (tx_mbufs[idx])
+    mbuffree(tx_mbufs[idx]);
+
+  // Fill in the descriptor with the packet to transmit.
+  tx_ring[idx].addr = (uint64)m->head;
+  tx_ring[idx].length = m->len;
+  tx_ring[idx].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+  tx_ring[idx].status = 0;
+
+  // Stash a pointer so that it can be freed after sending.
+  tx_mbufs[idx] = m;
+
+  // Update the ring position.
+  regs[E1000_TDT] = (idx + 1) % TX_RING_SIZE;
+
+  release(&e1000_lock);
   return 0;
 }
 
@@ -115,6 +140,46 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver an mbuf for each packet (using net_rx()).
   //
+
+  uint32 idx;
+  struct mbuf *m;
+  acquire(&e1000_lock);
+
+  // Find the ring index at which the next waiting received
+  // packet (if any) is located: one past E1000_RDT.
+  idx = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+
+  // Process all packets that have arrived.
+  while (rx_ring[idx].status & E1000_RXD_STAT_DD)
+  {
+    // Update the mbuf's length.
+    m = rx_mbufs[idx];
+    m->len = rx_ring[idx].length;
+
+    // Allocate a new mbuf to replace the one delivered to net_rx().
+    rx_mbufs[idx] = mbufalloc(0);
+    if (rx_mbufs[idx] == 0)
+      panic("e1000");
+    
+    // Program its data pointer into the descriptor.
+    rx_ring[idx].addr = (uint64)rx_mbufs[idx]->head;
+    rx_ring[idx].status = 0;
+
+    // Update E1000_RDT to the index of the last ring descriptor
+    // processed, so the E1000 can reuse this descriptor.
+    regs[E1000_RDT] = idx;
+
+    // Move on to the next descriptor in the ring.
+    idx = (idx + 1) % RX_RING_SIZE;
+    release(&e1000_lock);
+
+    // Deliver the packet to the network stack *outside* the lock.
+    // net_rx() may call e1000_transmit() which needs it.
+    net_rx(m);
+    acquire(&e1000_lock);
+  }
+
+  release(&e1000_lock);
 }
 
 void
