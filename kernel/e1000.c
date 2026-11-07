@@ -90,6 +90,14 @@ e1000_init(uint32 *xregs)
   regs[E1000_RDTR] = 0; // interrupt after every received packet (no timer)
   regs[E1000_RADV] = 0; // interrupt after every packet (no timer)
   regs[E1000_IMS] = (1 << 7); // RXDW -- Receiver Descriptor Write Back
+
+  // QEMU 6.2 defers receiving for one second after an RCTL write.
+  // Let that interval pass before user programs can send a request whose
+  // reply would otherwise be delayed past the network backend's timeout.
+  // The QEMU virt machine's timebase runs at 10 MHz.
+  uint64 ready_at = r_time() + 12000000;
+  while (r_time() < ready_at)
+    ;
 }
 
 int
@@ -110,6 +118,9 @@ e1000_transmit(struct mbuf *m)
     return -1;
   }
 
+  // Observe the device's completion before reusing the buffer.
+  __sync_synchronize();
+
   // Free the last mbuf that was transmitted from this
   // descriptor, if there was one.
   if (tx_mbufs[idx])
@@ -125,6 +136,8 @@ e1000_transmit(struct mbuf *m)
   tx_mbufs[idx] = m;
 
   // Update the ring position.
+  // Publish the packet and descriptor before notifying the device.
+  __sync_synchronize();
   regs[E1000_TDT] = (idx + 1) % TX_RING_SIZE;
 
   release(&e1000_lock);
@@ -142,7 +155,7 @@ e1000_recv(void)
   //
 
   uint32 idx;
-  struct mbuf *m;
+  struct mbuf *m, *replacement;
   acquire(&e1000_lock);
 
   // Find the ring index at which the next waiting received
@@ -152,14 +165,21 @@ e1000_recv(void)
   // Process all packets that have arrived.
   while (rx_ring[idx].status & E1000_RXD_STAT_DD)
   {
+    // Observe the device's DMA writes after seeing completion.
+    __sync_synchronize();
     // Update the mbuf's length.
     m = rx_mbufs[idx];
     m->len = rx_ring[idx].length;
 
     // Allocate a new mbuf to replace the one delivered to net_rx().
-    rx_mbufs[idx] = mbufalloc(0);
-    if (rx_mbufs[idx] == 0)
-      panic("e1000");
+    replacement = mbufalloc(0);
+    if (replacement == 0) {
+      // Drop this packet and return its buffer to the device.
+      m->len = 0;
+      replacement = m;
+      m = 0;
+    }
+    rx_mbufs[idx] = replacement;
     
     // Program its data pointer into the descriptor.
     rx_ring[idx].addr = (uint64)rx_mbufs[idx]->head;
@@ -167,6 +187,7 @@ e1000_recv(void)
 
     // Update E1000_RDT to the index of the last ring descriptor
     // processed, so the E1000 can reuse this descriptor.
+    __sync_synchronize();
     regs[E1000_RDT] = idx;
 
     // Move on to the next descriptor in the ring.
@@ -175,7 +196,8 @@ e1000_recv(void)
 
     // Deliver the packet to the network stack *outside* the lock.
     // net_rx() may call e1000_transmit() which needs it.
-    net_rx(m);
+    if (m)
+      net_rx(m);
     acquire(&e1000_lock);
   }
 
