@@ -232,8 +232,10 @@ dns()
   memset(obuf, 0, N);
   memset(ibuf, 0, N);
   
-  // 8.8.8.8: google's name server
-  dst = (8 << 24) | (8 << 16) | (8 << 8) | (8 << 0);
+  // 8.8.8.8: Google's name server (often times out on my network).
+  // dst = (8 << 24) | (8 << 16) | (8 << 8) | (8 << 0);
+  // Use Cloudflare's 1.1.1.1 for more reliable DNS testing here.
+  dst = (1 << 24) | (1 << 16) | (1 << 8) | (1 << 0);
 
   if((fd = connect(dst, 10000, 53)) < 0){
     fprintf(2, "ping: connect() failed\n");
