@@ -1,15 +1,28 @@
-# 📁 My MIT 6.1810 Xv6 Labs
+# 🛜 My MIT 6.1810 Xv6 Labs - Networking Lab
 
-This repository contains my personal solutions to the labs of
-**MIT 6.1810 (6.828): Operating System Engineering**, Fall 2022.
-For general information (schedule, lectures, and lab overviews), please see the
-[original website](https://pdos.csail.mit.edu/6.828/2022/index.html).
+This lab writes an xv6 device driver for a **network interface card (NIC)**:
+the Intel E1000, emulated by QEMU and connected to an emulated Ethernet LAN.
+Complete `e1000_transmit()` and `e1000_recv()` in [`kernel/e1000.c`](kernel/e1000.c)
+so that the driver can send and receive packets, working with the IP/UDP/ARP
+network stack already provided in [`kernel/net.c`](kernel/net.c).
 
-The original labs repository can be cloned with:
+This branch contains my solutions to the lab. For details, hints, and grading
+criteria, please refer to the [official net lab page](https://pdos.csail.mit.edu/6.828/2022/labs/net.html). The original lab branch can be cloned with:
 
 ``` bash
 git clone git://g.csail.mit.edu/xv6-labs-2022
+git fetch && git checkout net
 ```
+
+## ❗️ Minor Changes to the Lab
+
+- **E1000 Initialization**: QEMU 6.2 defers receiving for one second after an RCTL write,
+which affects the ping test often. A interval is add to **my** `e1000_init()`, so
+that interval could pass before user programs can send a request whose
+reply would otherwise be delayed past the network backend's timeout.
+- **Grade Lab DNS Test**: The original lab handout uses `8.8.8.8` Google's name server
+for the DNS test, which often fails in my docker container network, thus I change it
+to Cloudflare's `1.1.1.1` for more reliable DNS service.
 
 ## 🛠️ Building & Running Xv6
 
@@ -22,34 +35,11 @@ sudo apt-get install git build-essential gdb-multiarch qemu-system-misc gcc-risc
 
 Once they are installed, and in your shell search path, you can run "make qemu".
 
-## 📖 Lab Contents
+## 📖 Recommended Reading before Coding
 
-Each lab has its own branch, `git checkout` to it, run `make qemu` to build xv6
-and run all the tests with `make grade`.
-
-| # | Lab | Summary |
-| - | --- | ------- |
-| 1 | [⚙️ Unix Utilities] | Implement classic Unix utilities in xv6. |
-| 2 | [📞 System Calls] | Explore internals of the xv6 kernel and add new system calls. |
-| 3 | [📃 Page Tables] | Modify page tables to speed up syscalls and detect accessed pages. |
-| 4 | [🕳️ Traps] | Implement an user-level trap handling (alarm). |
-| 5 | [🐮 Copy-on-Write] | Implement copy-on-write fork to defer page copying. |
-| 6 | [🧵 Multithreading] | User-level threads, speed up program, and a barrier. |
-| 7 | [🛜 Networking] | Write an E1000 NIC device driver. |
-| 8 | [🔐 Locks] | Reduce lock contention in the memory allocator and buffer cache. |
-| 9 | [🗄️ File System] | Add large files and symbolic links. |
-| 10 | [🗺️ Mmap] | Implement mmap and munmap for memory-mapped files. |
-
-[⚙️ Unix Utilities]: https://pdos.csail.mit.edu/6.828/2022/labs/util.html
-[📞 System Calls]: https://pdos.csail.mit.edu/6.828/2022/labs/syscall.html
-[📃 Page Tables]: https://pdos.csail.mit.edu/6.828/2022/labs/pgtbl.html
-[🕳️ Traps]: https://pdos.csail.mit.edu/6.828/2022/labs/traps.html
-[🐮 Copy-on-Write]: https://pdos.csail.mit.edu/6.828/2022/labs/cow.html
-[🧵 Multithreading]: https://pdos.csail.mit.edu/6.828/2022/labs/thread.html
-[🛜 Networking]: https://pdos.csail.mit.edu/6.828/2022/labs/net.html
-[🔐 Locks]: https://pdos.csail.mit.edu/6.828/2022/labs/lock.html
-[🗄️ File System]: https://pdos.csail.mit.edu/6.828/2022/labs/fs.html
-[🗺️ Mmap]: https://pdos.csail.mit.edu/6.828/2022/labs/mmap.html
+- [Xv6 book, Chapter 5 "Interrupts and device drivers"](https://pdos.csail.mit.edu/6.828/2022/xv6/book-riscv-rev3.pdf)
+- [Intel 8254x GbE Software Developer's Manual](https://pdos.csail.mit.edu/6.1810/2022/readings/8254x_GBe_SDM.pdf)
+  (Sections 2, 3.2-3.4, 4.1, 13, and 14 are the most relevant)
 
 ## 🙌 ACKNOWLEDGMENTS
 
