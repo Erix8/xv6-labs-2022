@@ -14,27 +14,27 @@ run_cmd(char *new_argv[], int cmd_argc, char *buf)
   token_count = 0;
   start = 0;
   while (buf[start] != '\0') {
-    // Skip leading whitespace (space or tab)
+    // Skip leading whitespace (space or tab).
     while (buf[start] == ' ' || buf[start] == '\t')
       start++;
 
     if (buf[start] == '\0')
-      break;  // No more tokens
+      break;
 
-    // Found the start of a token
+    // Found the start of a token.
     new_argv[cmd_argc + token_count] = &buf[start];
     token_count++;
 
     if (cmd_argc + token_count >= MAXARG - 1)
       break;  // Too many arguments
 
-    // Find the end of this token
+    // Find the end of this token.
     end = start;
     while (buf[end] != '\0' && buf[end] != ' ' && buf[end] != '\t')
       end++;
 
     if (buf[end] == '\0')
-      break;  // Token reaches end of line
+      break;
 
     buf[end] = '\0';  // Terminate the token
     start = end + 1;
@@ -68,7 +68,7 @@ main(int argc, char *argv[])
     exit(1);
   }
 
-  // Copy the base command arguments (argv[1] through argv[argc-1])
+  // Copy the base command arguments (argv[1] through argv[argc-1]).
   cmd_argc = argc - 1;
   for (i = 0; i < cmd_argc; i++) {
     new_argv[i] = argv[i + 1];
@@ -77,33 +77,30 @@ main(int argc, char *argv[])
   p = buf;
   while (1) {
     n = read(0, &ch, 1);
-    if (n <= 0) {
-      break;  // EOF or error
+    if(n == 0){
+      break;  // EOF
+    } else if(n < 0){
+      fprintf(2, "read: failed to read from fd 0\n");
     }
 
-    if (ch == '\n') {
-      // End of one line: execute the command with this line's words as extra args
-      *p = '\0';  // null-terminate the line
-
-      // Skip empty lines
-      if (p != buf) {
+    if(ch == '\n'){
+      *p = '\0';
+      // Skip empty lines.
+      if(p != buf){
         run_cmd(new_argv, cmd_argc, buf);
       }
-
-      // Reset buffer pointer for next line
       p = buf;
     } else {
-      // Store the character in the buffer
       *p = ch;
       p++;
-      // Prevent buffer overflow
+      // Prevent buffer overflow.
       if (p >= buf + sizeof(buf) - 1) {
         p = buf + sizeof(buf) - 1;
       }
     }
   }
 
-  // Handle the case where the last line has no trailing newline
+  // Handle the case where the last line has no trailing newline.
   if (p != buf) {
     *p = '\0';
     run_cmd(new_argv, cmd_argc, buf);
