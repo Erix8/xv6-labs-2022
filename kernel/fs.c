@@ -416,8 +416,71 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
+
+  if(bn < NINDIRECT * NINDIRECT){
+    // Load doubly-indirect block, allocating if necessary.
+    if((addr = ip->addrs[NDIRECT + 1]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      ip->addrs[NDIRECT + 1] = addr;
+    }
+
+    // Load the matched indirect block, allocating if necessary.
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn / NINDIRECT]) == 0){
+      addr = balloc(ip->dev);
+      if(addr){
+        a[bn / NINDIRECT] = addr;
+        log_write(bp);
+      }
+    }
+    brelse(bp);
+
+    // Alloc indirect block failed.
+    if(addr == 0)
+      return 0;
+
+    // Load the exact block, allocating if necessary.
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    if((addr = a[bn % NINDIRECT]) == 0){
+      addr = balloc(ip->dev);
+      if(addr){
+        a[bn % NINDIRECT] = addr;
+        log_write(bp);
+      }
+    }
+    brelse(bp);
+
+    return addr;
+  }
 
   panic("bmap: out of range");
+}
+
+static void
+free_block_tree(uint dev, uint addr, int depth)
+{
+  struct buf *bp;
+  uint *a;
+  int j;
+
+  if(depth == 0){
+    bfree(dev, addr);
+    return;
+  }
+  
+  bp = bread(dev, addr);
+  a = (uint*)bp->data;
+  for(j = 0; j < NINDIRECT; j++){
+    if(a[j])
+      free_block_tree(dev, a[j], depth-1);
+  }
+  brelse(bp);
+  bfree(dev, addr);
 }
 
 // Truncate inode (discard contents).
@@ -425,9 +488,7 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -437,15 +498,13 @@ itrunc(struct inode *ip)
   }
 
   if(ip->addrs[NDIRECT]){
-    bp = bread(ip->dev, ip->addrs[NDIRECT]);
-    a = (uint*)bp->data;
-    for(j = 0; j < NINDIRECT; j++){
-      if(a[j])
-        bfree(ip->dev, a[j]);
-    }
-    brelse(bp);
-    bfree(ip->dev, ip->addrs[NDIRECT]);
+    free_block_tree(ip->dev, ip->addrs[NDIRECT], 1);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  if(ip->addrs[NDIRECT + 1]){
+    free_block_tree(ip->dev, ip->addrs[NDIRECT + 1], 2);
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
