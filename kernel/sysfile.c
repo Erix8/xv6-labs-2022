@@ -256,7 +256,9 @@ create(char *path, short type, short major, short minor)
   if((ip = dirlookup(dp, name, 0)) != 0){
     iunlockput(dp);
     ilock(ip);
-    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE))
+    // Let open resolve an existing symbolic link.
+    if(type == T_FILE && (ip->type == T_FILE || ip->type == T_DEVICE ||
+                          ip->type == T_SYMLINK))
       return ip;
     iunlockput(ip);
     return 0;
@@ -308,7 +310,7 @@ sys_open(void)
   int fd, omode;
   struct file *f;
   struct inode *ip;
-  int n;
+  int n, depth = 0;
 
   argint(1, &omode);
   if((n = argstr(0, path, MAXPATH)) < 0)
@@ -328,11 +330,35 @@ sys_open(void)
       return -1;
     }
     ilock(ip);
-    if(ip->type == T_DIR && omode != O_RDONLY){
+  }
+
+  // Follow links unless the caller requested the link itself.
+  while(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW)){
+    // Bound traversal and validate the stored path length.
+    if(depth++ >= 10 || ip->size == 0 || ip->size > sizeof(path)){
       iunlockput(ip);
       end_op();
       return -1;
     }
+    n = ip->size;
+    if(readi(ip, 0, (uint64)path, 0, n) != n || path[n-1] != '\0'){
+      iunlockput(ip);
+      end_op();
+      return -1;
+    }
+    // Release the link before looking up its target.
+    iunlockput(ip);
+    if((ip = namei(path)) == 0){
+      end_op();
+      return -1;
+    }
+    ilock(ip);
+  }
+
+  if(ip->type == T_DIR && omode != O_RDONLY){
+    iunlockput(ip);
+    end_op();
+    return -1;
   }
 
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
@@ -507,5 +533,49 @@ sys_pipe(void)
 uint64
 sys_symlink(void)
 {
+  char target[MAXPATH], path[MAXPATH];
+  char name[DIRSIZ];
+  struct inode *dp, *ip;
+  int len;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  begin_op();
+  if((dp = nameiparent(path, name)) == 0){
+    end_op();
+    return -1;
+  }
+  // Hold the parent lock until the new entry is installed.
+  ilock(dp);
+
+  if((ip = dirlookup(dp, name, 0)) != 0){
+    iput(ip);
+    goto bad_parent;
+  }
+  if((ip = ialloc(dp->dev, T_SYMLINK)) == 0)
+    goto bad_parent;
+
+  ilock(ip);
+  ip->nlink = 1;
+  // Store the terminated target before publishing the directory entry.
+  len = strlen(target) + 1;
+  if(writei(ip, 0, (uint64)target, 0, len) != len ||
+     dirlink(dp, name, ip->inum) < 0){
+    // Reclaim the inode if creation fails.
+    ip->nlink = 0;
+    iupdate(ip);
+    iunlockput(ip);
+    goto bad_parent;
+  }
+
+  iunlockput(ip);
+  iunlockput(dp);
+  end_op();
+  return 0;
+
+bad_parent:
+  iunlockput(dp);
+  end_op();
   return -1;
 }
