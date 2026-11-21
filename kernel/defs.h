@@ -8,6 +8,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct vma;
 
 // bio.c
 void            binit(void);
@@ -29,6 +30,7 @@ int             exec(char*, char**);
 struct file*    filealloc(void);
 void            fileclose(struct file*);
 int             mmap_fault(struct proc*, uint64, uint64);
+int             vma_unmap(struct proc*, struct vma*, uint64, uint64);
 struct file*    filedup(struct file*);
 void            fileinit(void);
 int             fileread(struct file*, uint64, int n);

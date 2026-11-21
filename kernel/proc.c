@@ -281,14 +281,16 @@ growproc(int n)
   return 0;
 }
 
-// Release populated pages and file references. Shared-page writeback will be
-// added with munmap.
+// Release all VMAs when a process exits or replaces its address space.
 void
 vma_clear(struct proc *p)
 {
   for(int i = 0; i < NVMA; i++){
     if(p->vmas[i].used){
       struct vma *v = &p->vmas[i];
+      if(vma_unmap(p, v, v->addr, v->length) == 0)
+        continue;
+      // Exit cannot report writeback errors; still release all resources.
       for(uint64 va = v->addr; va < v->addr + v->length; va += PGSIZE){
         pte_t *pte = walk(p->pagetable, va, 0);
         if(pte && (*pte & PTE_V))

@@ -569,7 +569,97 @@ sys_mmap(void)
 uint64
 sys_munmap(void)
 {
+  uint64 addr, length, end;
+  int n;
+  struct proc *p = myproc();
+
+  argaddr(0, &addr);
+  argint(1, &n);
+  if(n <= 0 || addr % PGSIZE != 0)
+    return -1;
+  length = PGROUNDUP((uint64)n);
+  end = addr + length;
+  if(end < addr || end > TRAPFRAME)
+    return -1;
+
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &p->vmas[i];
+    if(v->used && addr >= v->addr && end <= v->addr + v->length &&
+       (addr == v->addr || end == v->addr + v->length))
+      return vma_unmap(p, v, addr, length);
+  }
   return -1;
+}
+
+// Write back one populated shared page, without extending the file.
+static int
+vma_writepage(struct vma *v, uint64 va, uint64 pa)
+{
+  uint64 offset = v->offset + va - v->addr;
+  int done = 0;
+  int max = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+
+  while(done < PGSIZE){
+    int n = PGSIZE - done;
+    int written = 0;
+    if(n > max)
+      n = max;
+
+    begin_op();
+    ilock(v->file->ip);
+    uint64 off = offset + done;
+    if(off < v->file->ip->size){
+      if(n > v->file->ip->size - off)
+        n = v->file->ip->size - off;
+      written = writei(v->file->ip, 0, pa + done, off, n);
+    } else {
+      n = 0;
+    }
+    iunlock(v->file->ip);
+    end_op();
+
+    if(written != n)
+      return -1;
+    if(n == 0)
+      break;
+    done += n;
+  }
+  return 0;
+}
+
+// The range must be a whole VMA or a page-aligned prefix/suffix of one.
+int
+vma_unmap(struct proc *p, struct vma *v, uint64 addr, uint64 length)
+{
+  uint64 end = addr + length;
+
+  // Write first, so a failed write leaves the VMA and its pages intact.
+  if(v->flags == MAP_SHARED && (v->prot & PROT_WRITE)){
+    for(uint64 va = addr; va < end; va += PGSIZE){
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if(pte && (*pte & PTE_V) &&
+         vma_writepage(v, va, PTE2PA(*pte)) < 0)
+        return -1;
+    }
+  }
+
+  for(uint64 va = addr; va < end; va += PGSIZE){
+    pte_t *pte = walk(p->pagetable, va, 0);
+    if(pte && (*pte & PTE_V))
+      uvmunmap(p->pagetable, va, 1, 1);
+  }
+
+  if(length == v->length){
+    fileclose(v->file);
+    memset(v, 0, sizeof(*v));
+  } else if(addr == v->addr){
+    v->addr += length;
+    v->offset += length;
+    v->length -= length;
+  } else {
+    v->length -= length;
+  }
+  return 0;
 }
 
 // Populate one file-backed page for a user load/store page fault.
