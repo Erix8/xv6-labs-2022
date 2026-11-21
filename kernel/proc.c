@@ -124,6 +124,7 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  memset(p->vmas, 0, sizeof(p->vmas));
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -264,6 +265,12 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+    // Leave mapped ranges reserved even before they have physical pages.
+    if(sz + (uint64)n < sz || sz + (uint64)n > TRAPFRAME)
+      return -1;
+    for(int i = 0; i < NVMA; i++)
+      if(p->vmas[i].used && sz + (uint64)n > p->vmas[i].addr)
+        return -1;
     if((sz = uvmalloc(p->pagetable, sz, sz + n, PTE_W)) == 0) {
       return -1;
     }
@@ -272,6 +279,19 @@ growproc(int n)
   }
   p->sz = sz;
   return 0;
+}
+
+// At this stage VMAs have no physical pages; release their file references.
+// Extend this to unmap and write back pages when fault handling is added.
+void
+vma_clear(struct proc *p)
+{
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].used){
+      fileclose(p->vmas[i].file);
+      memset(&p->vmas[i], 0, sizeof(p->vmas[i]));
+    }
+  }
 }
 
 // Create a new process, copying the parent.
@@ -350,6 +370,8 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  vma_clear(p);
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){

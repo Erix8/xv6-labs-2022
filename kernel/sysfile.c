@@ -6,6 +6,7 @@
 
 #include "types.h"
 #include "riscv.h"
+#include "memlayout.h"
 #include "defs.h"
 #include "param.h"
 #include "stat.h"
@@ -15,19 +16,6 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
-
-// The system call entry points will be implemented in the mmap lab.
-uint64
-sys_mmap(void)
-{
-  return -1;
-}
-
-uint64
-sys_munmap(void)
-{
-  return -1;
-}
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -515,4 +503,71 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 requested, length, top, start;
+  int n, prot, flags, offset;
+  struct file *f;
+  struct proc *p = myproc();
+  struct vma *slot = 0;
+
+  argaddr(0, &requested);
+  argint(1, &n);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(5, &offset);
+  if(argfd(4, 0, &f) < 0 || requested != 0 || offset != 0 || n <= 0)
+    return -1;
+  if(f->type != FD_INODE || !f->readable ||
+     (prot != PROT_READ && prot != PROT_WRITE &&
+      prot != (PROT_READ | PROT_WRITE)) ||
+     (flags != MAP_SHARED && flags != MAP_PRIVATE) ||
+     (flags == MAP_SHARED && (prot & PROT_WRITE) && !f->writable))
+    return -1;
+
+  for(int i = 0; i < NVMA; i++)
+    if(!p->vmas[i].used){
+      slot = &p->vmas[i];
+      break;
+    }
+  if(slot == 0)
+    return -1;
+
+  length = PGROUNDUP((uint64)n);
+  top = TRAPFRAME;
+  // Search downward, moving below any VMA that overlaps the candidate.
+  for(;;){
+    if(top < length || top - length < PGROUNDUP(p->sz))
+      return -1;
+    start = top - length;
+    int overlap = 0;
+    for(int i = 0; i < NVMA; i++){
+      struct vma *v = &p->vmas[i];
+      if(v->used && start < v->addr + v->length && top > v->addr){
+        top = v->addr;
+        overlap = 1;
+        break;
+      }
+    }
+    if(!overlap)
+      break;
+  }
+
+  slot->addr = start;
+  slot->length = length;
+  slot->offset = 0;
+  slot->prot = prot;
+  slot->flags = flags;
+  slot->file = filedup(f);
+  slot->used = 1;
+  return start;
+}
+
+uint64
+sys_munmap(void)
+{
+  return -1;
 }

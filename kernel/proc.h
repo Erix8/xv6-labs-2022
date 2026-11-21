@@ -81,6 +81,19 @@ struct trapframe {
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+#define NVMA 16
+
+// A file-backed range of user virtual addresses, populated on demand.
+struct vma {
+  int used;
+  uint64 addr;       // page-aligned beginning of the range
+  uint64 length;     // page-rounded length
+  uint64 offset;     // file offset corresponding to addr
+  int prot;
+  int flags;
+  struct file *file; // one reference held by this VMA
+};
+
 // Per-process state
 struct proc {
   struct spinlock lock;
@@ -102,6 +115,7 @@ struct proc {
   struct trapframe *trapframe; // data page for trampoline.S
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
+  struct vma vmas[NVMA];       // File-backed virtual memory ranges
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 };
