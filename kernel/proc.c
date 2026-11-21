@@ -302,6 +302,53 @@ vma_clear(struct proc *p)
   }
 }
 
+// Copy VMA metadata and already populated pages to an unpublished child.
+static int
+vma_copy(struct proc *parent, struct proc *child)
+{
+  for(int i = 0; i < NVMA; i++){
+    struct vma *src = &parent->vmas[i];
+    struct vma *dst = &child->vmas[i];
+    if(!src->used)
+      continue;
+
+    *dst = *src;
+    dst->file = filedup(src->file);
+    for(uint64 va = src->addr; va < src->addr + src->length; va += PGSIZE){
+      pte_t *pte = walk(parent->pagetable, va, 0);
+      if(pte == 0 || (*pte & PTE_V) == 0)
+        continue;
+
+      char *mem = kalloc();
+      if(mem == 0)
+        goto bad;
+      memmove(mem, (char*)PTE2PA(*pte), PGSIZE);
+      if(mappages(child->pagetable, va, PGSIZE, (uint64)mem,
+                  PTE_FLAGS(*pte)) < 0){
+        kfree(mem);
+        goto bad;
+      }
+    }
+  }
+  return 0;
+
+bad:
+  // Do not write back: the child was never published and did no writes.
+  for(int i = 0; i < NVMA; i++){
+    struct vma *v = &child->vmas[i];
+    if(!v->used)
+      continue;
+    for(uint64 va = v->addr; va < v->addr + v->length; va += PGSIZE){
+      pte_t *pte = walk(child->pagetable, va, 0);
+      if(pte && (*pte & PTE_V))
+        uvmunmap(child->pagetable, va, 1, 1);
+    }
+    fileclose(v->file);
+    memset(v, 0, sizeof(*v));
+  }
+  return -1;
+}
+
 // Create a new process, copying the parent.
 // Sets up child kernel stack to return as if from fork() system call.
 int
@@ -323,6 +370,12 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  if(vma_copy(p, np) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
