@@ -571,3 +571,55 @@ sys_munmap(void)
 {
   return -1;
 }
+
+// Populate one file-backed page for a user load/store page fault.
+int
+mmap_fault(struct proc *p, uint64 addr, uint64 cause)
+{
+  struct vma *v = 0;
+  uint64 va, offset;
+  pte_t *pte;
+  char *mem;
+  int perm, nread;
+
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].used && addr >= p->vmas[i].addr &&
+       addr - p->vmas[i].addr < p->vmas[i].length){
+      v = &p->vmas[i];
+      break;
+    }
+  }
+  if(v == 0 || (cause == 13 && !(v->prot & PROT_READ)) ||
+     (cause == 15 && !(v->prot & PROT_WRITE)))
+    return -1;
+
+  va = PGROUNDDOWN(addr);
+  pte = walk(p->pagetable, va, 0);
+  if(pte && (*pte & PTE_V))
+    return -1; // A protection fault, not a missing page.
+
+  if((mem = kalloc()) == 0)
+    return -1;
+  memset(mem, 0, PGSIZE);
+
+  offset = v->offset + va - v->addr;
+  ilock(v->file->ip);
+  nread = readi(v->file->ip, 0, (uint64)mem, offset, PGSIZE);
+  iunlock(v->file->ip);
+  if(nread < 0){
+    kfree(mem);
+    return -1;
+  }
+
+  perm = PTE_U;
+  if(v->prot & PROT_READ)
+    perm |= PTE_R;
+  // RISC-V reserves PTE_W without PTE_R, so writable pages need both.
+  if(v->prot & PROT_WRITE)
+    perm |= PTE_R | PTE_W;
+  if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) < 0){
+    kfree(mem);
+    return -1;
+  }
+  return 0;
+}

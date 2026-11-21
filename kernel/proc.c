@@ -281,13 +281,19 @@ growproc(int n)
   return 0;
 }
 
-// At this stage VMAs have no physical pages; release their file references.
-// Extend this to unmap and write back pages when fault handling is added.
+// Release populated pages and file references. Shared-page writeback will be
+// added with munmap.
 void
 vma_clear(struct proc *p)
 {
   for(int i = 0; i < NVMA; i++){
     if(p->vmas[i].used){
+      struct vma *v = &p->vmas[i];
+      for(uint64 va = v->addr; va < v->addr + v->length; va += PGSIZE){
+        pte_t *pte = walk(p->pagetable, va, 0);
+        if(pte && (*pte & PTE_V))
+          uvmunmap(p->pagetable, va, 1, 1);
+      }
       fileclose(p->vmas[i].file);
       memset(&p->vmas[i], 0, sizeof(p->vmas[i]));
     }

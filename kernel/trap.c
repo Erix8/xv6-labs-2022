@@ -65,6 +65,14 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 13 || r_scause() == 15){
+    uint64 cause = r_scause();
+    uint64 addr = r_stval();
+
+    // Save trap registers before enabling interrupts: file I/O may sleep.
+    intr_on();
+    if(mmap_fault(p, addr, cause) < 0)
+      setkilled(p);
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
