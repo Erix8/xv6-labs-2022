@@ -16,6 +16,19 @@
 #include "file.h"
 #include "fcntl.h"
 
+// The system call entry points will be implemented in the mmap lab.
+uint64
+sys_mmap(void)
+{
+  return -1;
+}
+
+uint64
+sys_munmap(void)
+{
+  return -1;
+}
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
